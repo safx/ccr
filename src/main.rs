@@ -242,10 +242,10 @@ fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
             if let Some(model_name) = model_name {
                 if let Some(pricing) = get_model_pricing(model_name) {
                     let tokens = TokenUsage {
-                        input: usage.input_tokens,
-                        output: usage.output_tokens,
-                        cache_creation: usage.cache_creation_input_tokens,
-                        cache_read: usage.cache_read_input_tokens,
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        cache_creation_tokens: usage.cache_creation_input_tokens,
+                        cache_read_tokens: usage.cache_read_input_tokens,
                     };
                     return calculate_cost(&tokens, pricing);
                 }
@@ -436,8 +436,38 @@ struct BlockInfo {
     remaining_minutes: u64,
 }
 
-// Load active block - optimized
+// Load active block using proper session blocks implementation
 async fn load_active_block() -> Result<Option<BlockInfo>> {
+    use ccr::session_blocks::{identify_session_blocks, find_active_block, calculate_burn_rate, load_all_entries};
+    
+    let claude_paths = get_claude_paths();
+    let now = Utc::now();
+    
+    // Load all entries
+    let entries = load_all_entries(&claude_paths).await?;
+    
+    // Identify session blocks
+    let blocks = identify_session_blocks(entries, &*MODEL_PRICING);
+    
+    // Find active block
+    if let Some(active_block) = find_active_block(&blocks) {
+        let remaining = active_block.end_time.signed_duration_since(now);
+        let remaining_minutes = remaining.num_minutes().max(0) as u64;
+        
+        let burn_rate = calculate_burn_rate(active_block);
+        
+        return Ok(Some(BlockInfo {
+            block_cost: active_block.cost_usd,
+            burn_rate_per_hour: burn_rate,
+            remaining_minutes,
+        }));
+    }
+    
+    Ok(None)
+}
+
+// Load active block - old implementation (keeping for comparison)
+async fn load_active_block_old() -> Result<Option<BlockInfo>> {
     let claude_paths = get_claude_paths();
     let now = Utc::now();
     let five_hours = chrono::Duration::hours(5);

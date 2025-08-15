@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+pub mod session_blocks;
+
 // Green phase: Minimal implementation to pass the test
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelPricing {
@@ -15,26 +17,26 @@ pub struct ModelPricing {
 // Green phase: TokenUsage struct for calculate_cost
 #[derive(Debug, Clone)]
 pub struct TokenUsage {
-    pub input: Option<u32>,
-    pub output: Option<u32>,
-    pub cache_creation: Option<u32>,
-    pub cache_read: Option<u32>,
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+    pub cache_creation_tokens: Option<u32>,
+    pub cache_read_tokens: Option<u32>,
 }
 
 // Green phase: calculate_cost function
 pub fn calculate_cost(tokens: &TokenUsage, pricing: &ModelPricing) -> f64 {
     let mut cost = 0.0;
     
-    if let (Some(input), Some(price)) = (tokens.input, pricing.input_cost_per_token) {
+    if let (Some(input), Some(price)) = (tokens.input_tokens, pricing.input_cost_per_token) {
         cost += input as f64 * price;
     }
-    if let (Some(output), Some(price)) = (tokens.output, pricing.output_cost_per_token) {
+    if let (Some(output), Some(price)) = (tokens.output_tokens, pricing.output_cost_per_token) {
         cost += output as f64 * price;
     }
-    if let (Some(cache_creation), Some(price)) = (tokens.cache_creation, pricing.cache_creation_input_token_cost) {
+    if let (Some(cache_creation), Some(price)) = (tokens.cache_creation_tokens, pricing.cache_creation_input_token_cost) {
         cost += cache_creation as f64 * price;
     }
-    if let (Some(cache_read), Some(price)) = (tokens.cache_read, pricing.cache_read_input_token_cost) {
+    if let (Some(cache_read), Some(price)) = (tokens.cache_read_tokens, pricing.cache_read_input_token_cost) {
         cost += cache_read as f64 * price;
     }
     
@@ -52,6 +54,13 @@ pub struct UsageEntry {
     pub message: Option<Message>,
     #[serde(rename = "requestId")]
     pub request_id: Option<String>,
+    // Additional fields for session blocks
+    #[serde(skip)]
+    pub message_id: Option<String>,
+    #[serde(skip)]
+    pub message_model: Option<String>,
+    #[serde(skip)]
+    pub message_usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -150,10 +159,10 @@ mod tests {
 
         // Test with all token types
         let tokens = TokenUsage {
-            input: Some(1000),
-            output: Some(500),
-            cache_creation: Some(200),
-            cache_read: Some(300),
+            input_tokens: Some(1000),
+            output_tokens: Some(500),
+            cache_creation_tokens: Some(200),
+            cache_read_tokens: Some(300),
         };
 
         let cost = calculate_cost(&tokens, &pricing);
@@ -164,10 +173,10 @@ mod tests {
 
         // Test with partial tokens
         let tokens_partial = TokenUsage {
-            input: Some(1000),
-            output: Some(500),
-            cache_creation: None,
-            cache_read: None,
+            input_tokens: Some(1000),
+            output_tokens: Some(500),
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
         };
 
         let cost_partial = calculate_cost(&tokens_partial, &pricing);

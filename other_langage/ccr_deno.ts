@@ -158,6 +158,11 @@ function formatCurrency(amount: number): string {
 }
 
 function formatRemainingTime(remaining: number): string {
+	// Handle negative remaining time (block expired)
+	if (remaining <= 0) {
+		return "Block expired";
+	}
+	
 	const remainingHours = Math.floor(remaining / 60);
 	const remainingMins = remaining % 60;
 	if (remainingHours > 0) {
@@ -353,10 +358,8 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 	const now = new Date();
 	const fiveHoursInMs = 5 * 60 * 60 * 1000;
 	
-	// Find entries within the last 5 hours
-	const recentEntries: UsageEntry[] = [];
-	let blockStartTime: Date | null = null;
-	let totalCost = 0;
+	// Collect all usage entries
+	const allEntries: { entry: UsageEntry; time: Date }[] = [];
 	const processedHashes = new Set<string>();
 	
 	for (const basePath of claudePaths) {
@@ -379,46 +382,19 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 							const entry = JSON.parse(line) as UsageEntry;
 							if (entry.timestamp) {
 								const entryTime = new Date(entry.timestamp);
-								const timeSinceEntry = now.getTime() - entryTime.getTime();
 								
-								if (timeSinceEntry <= fiveHoursInMs) {
-									// Create unique hash for deduplication
-									const messageId = entry.message?.id;
-									const requestId = entry.requestId;
-									if (messageId && requestId) {
-										const uniqueHash = `${messageId}:${requestId}`;
-										if (processedHashes.has(uniqueHash)) {
-											continue; // Skip duplicate
-										}
-										processedHashes.add(uniqueHash);
+								// Create unique hash for deduplication
+								const messageId = entry.message?.id;
+								const requestId = entry.requestId;
+								if (messageId && requestId) {
+									const uniqueHash = `${messageId}:${requestId}`;
+									if (processedHashes.has(uniqueHash)) {
+										continue; // Skip duplicate
 									}
-									
-									recentEntries.push(entry);
-									if (!blockStartTime || entryTime < blockStartTime) {
-										blockStartTime = entryTime;
-									}
-									// Check for pre-calculated costUSD
-									if (entry.costUSD) {
-										totalCost += entry.costUSD;
-									}
-									// Otherwise calculate from usage data
-									else if (entry.message?.usage) {
-										const usage = entry.message.usage;
-										const modelName = entry.message.model || entry.model;
-										const pricing = getModelPricing(modelName);
-										
-										if (pricing) {
-											const cost = calculateCost({
-												input: usage.input_tokens,
-												output: usage.output_tokens,
-												cacheCreation: usage.cache_creation_input_tokens,
-												cacheRead: usage.cache_read_input_tokens,
-											}, pricing);
-											
-											totalCost += cost;
-										}
-									}
+									processedHashes.add(uniqueHash);
 								}
+								
+								allEntries.push({ entry, time: entryTime });
 							}
 						} catch {
 							// Skip invalid lines
@@ -431,19 +407,105 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 		}
 	}
 	
-	if (recentEntries.length === 0 || !blockStartTime) {
+	// Sort entries by timestamp
+	allEntries.sort((a, b) => a.time.getTime() - b.time.getTime());
+	
+	// Identify session blocks (similar to ccusage logic)
+	const blocks: { start: Date; entries: UsageEntry[]; actualEnd: Date }[] = [];
+	let currentBlockStart: Date | null = null;
+	let currentBlockEntries: UsageEntry[] = [];
+	
+	for (const { entry, time } of allEntries) {
+		if (currentBlockStart === null) {
+			// First entry - start a new block (floored to the hour)
+			currentBlockStart = floorToHour(time);
+			currentBlockEntries = [entry];
+		} else {
+			const timeSinceBlockStart = time.getTime() - currentBlockStart.getTime();
+			const lastEntry = currentBlockEntries[currentBlockEntries.length - 1];
+			if (lastEntry && lastEntry.timestamp) {
+				const lastEntryTime = new Date(lastEntry.timestamp);
+				const timeSinceLastEntry = time.getTime() - lastEntryTime.getTime();
+				
+				if (timeSinceBlockStart > fiveHoursInMs || timeSinceLastEntry > fiveHoursInMs) {
+					// Close current block
+					blocks.push({
+						start: currentBlockStart,
+						entries: currentBlockEntries,
+						actualEnd: lastEntryTime
+					});
+					
+					// Start new block (floored to the hour)
+					currentBlockStart = floorToHour(time);
+					currentBlockEntries = [entry];
+				} else {
+					// Add to current block
+					currentBlockEntries.push(entry);
+				}
+			}
+		}
+	}
+	
+	// Close the last block if any
+	if (currentBlockStart !== null && currentBlockEntries.length > 0) {
+		const lastEntry = currentBlockEntries[currentBlockEntries.length - 1];
+		if (lastEntry && lastEntry.timestamp) {
+			blocks.push({
+				start: currentBlockStart,
+				entries: currentBlockEntries,
+				actualEnd: new Date(lastEntry.timestamp)
+			});
+		}
+	}
+	
+	// Find the active block
+	let activeBlock: { start: Date; entries: UsageEntry[]; actualEnd: Date } | null = null;
+	for (const block of blocks) {
+		const blockEndTime = new Date(block.start.getTime() + fiveHoursInMs);
+		const timeSinceLastActivity = now.getTime() - block.actualEnd.getTime();
+		const isActive = timeSinceLastActivity < fiveHoursInMs && now < blockEndTime;
+		
+		if (isActive) {
+			activeBlock = block;
+		}
+	}
+	
+	if (!activeBlock) {
 		return { blockInfo: "No active block", burnRateInfo: "", remainingInfo: "" };
 	}
 	
-	// Floor the block start time to the hour (same as ccusage)
-	blockStartTime = floorToHour(blockStartTime);
+	// Calculate total cost for the active block
+	let totalCost = 0;
+	for (const entry of activeBlock.entries) {
+		// Check for pre-calculated costUSD
+		if (entry.costUSD) {
+			totalCost += entry.costUSD;
+		}
+		// Otherwise calculate from usage data
+		else if (entry.message?.usage) {
+			const usage = entry.message.usage;
+			const modelName = entry.message.model || entry.model;
+			const pricing = getModelPricing(modelName);
+			
+			if (pricing) {
+				const cost = calculateCost({
+					input: usage.input_tokens,
+					output: usage.output_tokens,
+					cacheCreation: usage.cache_creation_input_tokens,
+					cacheRead: usage.cache_read_input_tokens,
+				}, pricing);
+				
+				totalCost += cost;
+			}
+		}
+	}
 	
 	// Calculate block end time
-	const blockEndTime = new Date(blockStartTime.getTime() + fiveHoursInMs);
+	const blockEndTime = new Date(activeBlock.start.getTime() + fiveHoursInMs);
 	const remaining = Math.round((blockEndTime.getTime() - now.getTime()) / (1000 * 60));
 	
 	// Calculate burn rate
-	const elapsedMinutes = (now.getTime() - blockStartTime.getTime()) / (1000 * 60);
+	const elapsedMinutes = (now.getTime() - activeBlock.start.getTime()) / (1000 * 60);
 	let burnRateInfo = "";
 	
 	if (elapsedMinutes > 5) {
