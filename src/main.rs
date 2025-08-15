@@ -10,9 +10,9 @@ use std::sync::LazyLock;
 use tokio::fs as async_fs;
 
 // Re-use structures from lib.rs
-use ccr::{ModelPricing, unified_loader, session_blocks};
-use unified_loader::{load_all_data_unified, calculate_today_cost, calculate_session_cost};
-use session_blocks::{identify_session_blocks, find_active_block, calculate_burn_rate};
+use ccr::{ModelPricing, session_blocks, unified_loader};
+use session_blocks::{calculate_burn_rate, find_active_block, identify_session_blocks};
+use unified_loader::{calculate_session_cost, calculate_today_cost, load_all_data_unified};
 
 // Simple Result type alias
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -69,6 +69,7 @@ static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::
 struct StatuslineHookJson {
     session_id: String,
     cwd: String,
+    #[allow(dead_code)]
     transcript_path: String,
     model: Model,
 }
@@ -76,6 +77,7 @@ struct StatuslineHookJson {
 #[derive(Debug, Deserialize)]
 struct Model {
     #[serde(alias = "_id")]
+    #[allow(dead_code)]
     id: Option<String>,
     display_name: String,
 }
@@ -83,47 +85,47 @@ struct Model {
 // Get Claude paths
 fn get_claude_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    
+
     if let Ok(home) = env::var("HOME") {
         let home_path = PathBuf::from(home);
-        
+
         // Primary path
         paths.push(home_path.join(".claude"));
-        
+
         // macOS paths
         paths.push(home_path.join("Library/Application Support/Claude"));
-        
-        // Linux paths  
+
+        // Linux paths
         paths.push(home_path.join(".config/Claude"));
         paths.push(home_path.join(".local/share/Claude"));
     }
-    
+
     // Windows paths
     if let Ok(appdata) = env::var("APPDATA") {
         paths.push(PathBuf::from(appdata).join("Claude"));
     }
-    
+
     paths.into_iter().filter(|p| p.exists()).collect()
 }
 
 // Get git branch
 async fn get_git_branch(cwd: &Path) -> Option<String> {
     let head_path = cwd.join(".git").join("HEAD");
-    
+
     if let Ok(content) = async_fs::read_to_string(&head_path).await {
         let trimmed = content.trim();
-        
+
         // Parse ref format
         if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
             return Some(branch.to_string());
         }
-        
+
         // Detached HEAD - return short hash
         if trimmed.len() >= 7 && !trimmed.starts_with("ref:") {
             return Some(trimmed[..7].to_string());
         }
     }
-    
+
     None
 }
 
@@ -181,12 +183,10 @@ async fn main() -> Result<()> {
 
     let unified_data = unified_data?;
 
-
-
     // Calculate metrics from the unified data
     let today_cost = calculate_today_cost(&unified_data, &MODEL_PRICING);
-    let session_cost = calculate_session_cost(&unified_data, &hook_data.session_id, &MODEL_PRICING)
-        .unwrap_or(0.0);
+    let session_cost =
+        calculate_session_cost(&unified_data, &hook_data.session_id, &MODEL_PRICING).unwrap_or(0.0);
 
     // Calculate active block
     let blocks = identify_session_blocks(unified_data.all_entries.clone(), &MODEL_PRICING);
@@ -219,9 +219,9 @@ async fn main() -> Result<()> {
         let now = Utc::now();
         let remaining = block.end_time.signed_duration_since(now);
         let remaining_minutes = remaining.num_minutes().max(0) as u64;
-        
+
         let block_str = format!("{} block", format_currency(block.cost_usd));
-        
+
         let burn_str = if let Some(rate) = calculate_burn_rate(block) {
             let rate_str = format!("{}/hr", format_currency(rate));
             let colored_rate = if rate < 30.0 {
@@ -235,12 +235,9 @@ async fn main() -> Result<()> {
         } else {
             String::new()
         };
-        
-        let remaining = format!(
-            " ⏰ {}",
-            format_remaining_time(remaining_minutes).magenta()
-        );
-        
+
+        let remaining = format!(" ⏰ {}", format_remaining_time(remaining_minutes).magenta());
+
         (block_str, burn_str, remaining)
     } else {
         ("No active block".to_string(), String::new(), String::new())
