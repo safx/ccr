@@ -2,16 +2,54 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc, Timelike};
 use clap::Parser;
 use colored::*;
+use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tokio::fs as async_fs;
+use tokio::task;
 
 // Re-use structures from lib.rs
-use ccr::{ModelPricing, TokenUsage, UsageEntry, calculate_cost, is_duplicate};
+use ccr::{ModelPricing, TokenUsage, UsageEntry, calculate_cost};
+
+// Static model pricing data - initialized once
+static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::new(|| {
+    let mut map = HashMap::with_capacity(4);
+    
+    map.insert("claude-opus-4-1-20250805", ModelPricing {
+        input_cost_per_token: Some(0.000015),
+        output_cost_per_token: Some(0.000075),
+        cache_creation_input_token_cost: Some(0.00001875),
+        cache_read_input_token_cost: Some(0.0000015),
+    });
+    
+    map.insert("claude-sonnet-4-20250514", ModelPricing {
+        input_cost_per_token: Some(0.000003),
+        output_cost_per_token: Some(0.000015),
+        cache_creation_input_token_cost: Some(0.00000375),
+        cache_read_input_token_cost: Some(0.0000003),
+    });
+    
+    map.insert("claude-3-opus-20240229", ModelPricing {
+        input_cost_per_token: Some(0.000015),
+        output_cost_per_token: Some(0.000075),
+        cache_creation_input_token_cost: Some(0.00001875),
+        cache_read_input_token_cost: Some(0.0000015),
+    });
+    
+    map.insert("claude-3.5-sonnet-20241022", ModelPricing {
+        input_cost_per_token: Some(0.000003),
+        output_cost_per_token: Some(0.000015),
+        cache_creation_input_token_cost: Some(0.00000375),
+        cache_read_input_token_cost: Some(0.0000003),
+    });
+    
+    map
+});
 
 // CLI arguments
 #[derive(Parser, Debug)]
@@ -29,87 +67,49 @@ struct StatuslineHookJson {
     transcript_path: String,
     cwd: String,
     model: ModelInfo,
-    workspace: Workspace,
     #[serde(default)]
-    version: Option<String>,
+    _workspace: Option<serde_json::Value>,
+    #[serde(default)]
+    _version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ModelInfo {
-    id: String,
+    #[serde(default)]
+    _id: String,
     display_name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct Workspace {
-    current_dir: String,
-    project_dir: String,
-}
-
-// Model pricing data
-fn get_model_pricing_map() -> HashMap<String, ModelPricing> {
-    let mut map = HashMap::new();
-    
-    map.insert("claude-opus-4-1-20250805".to_string(), ModelPricing {
-        input_cost_per_token: Some(0.000015),
-        output_cost_per_token: Some(0.000075),
-        cache_creation_input_token_cost: Some(0.00001875),
-        cache_read_input_token_cost: Some(0.0000015),
-    });
-    
-    map.insert("claude-sonnet-4-20250514".to_string(), ModelPricing {
-        input_cost_per_token: Some(0.000003),
-        output_cost_per_token: Some(0.000015),
-        cache_creation_input_token_cost: Some(0.00000375),
-        cache_read_input_token_cost: Some(0.0000003),
-    });
-    
-    map.insert("claude-3-opus-20240229".to_string(), ModelPricing {
-        input_cost_per_token: Some(0.000015),
-        output_cost_per_token: Some(0.000075),
-        cache_creation_input_token_cost: Some(0.00001875),
-        cache_read_input_token_cost: Some(0.0000015),
-    });
-    
-    map.insert("claude-3.5-sonnet-20241022".to_string(), ModelPricing {
-        input_cost_per_token: Some(0.000003),
-        output_cost_per_token: Some(0.000015),
-        cache_creation_input_token_cost: Some(0.00000375),
-        cache_read_input_token_cost: Some(0.0000003),
-    });
-    
-    map
-}
-
-fn get_model_pricing(model_name: &str) -> Option<ModelPricing> {
-    let pricing_map = get_model_pricing_map();
-    
-    // Direct match
-    if let Some(pricing) = pricing_map.get(model_name) {
-        return Some(pricing.clone());
+// Optimized model pricing lookup
+fn get_model_pricing(model_name: &str) -> Option<&'static ModelPricing> {
+    // Direct match first
+    if let Some(pricing) = MODEL_PRICING.get(model_name) {
+        return Some(pricing);
     }
     
+    // Lowercase once for comparison
+    let lower_name = model_name.to_lowercase();
+    
     // Partial match
-    for (key, pricing) in &pricing_map {
+    for (key, pricing) in MODEL_PRICING.iter() {
         if model_name.contains(key) || key.contains(model_name) {
-            return Some(pricing.clone());
+            return Some(pricing);
         }
     }
     
     // Default based on model type
-    if model_name.to_lowercase().contains("opus") {
-        return pricing_map.get("claude-opus-4-1-20250805").cloned();
+    if lower_name.contains("opus") {
+        MODEL_PRICING.get("claude-opus-4-1-20250805")
+    } else if lower_name.contains("sonnet") {
+        MODEL_PRICING.get("claude-sonnet-4-20250514")
+    } else {
+        None
     }
-    if model_name.to_lowercase().contains("sonnet") {
-        return pricing_map.get("claude-sonnet-4-20250514").cloned();
-    }
-    
-    None
 }
 
-// Get Claude configuration directories
+// Get Claude configuration directories - cached
 fn get_claude_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+    let mut paths = Vec::with_capacity(2);
     let home = home::home_dir().unwrap_or_default();
     
     // Check environment variable first
@@ -117,41 +117,47 @@ fn get_claude_paths() -> Vec<PathBuf> {
         for path in custom_path.split(',') {
             let path = path.trim();
             if !path.is_empty() {
-                paths.push(PathBuf::from(path));
+                let p = PathBuf::from(path);
+                if p.exists() && p.is_dir() {
+                    paths.push(p);
+                }
             }
         }
     } else {
         // Default paths
-        paths.push(home.join(".config").join("claude"));
-        paths.push(home.join(".claude"));
+        let config_path = home.join(".config").join("claude");
+        if config_path.exists() && config_path.is_dir() {
+            paths.push(config_path);
+        }
+        let home_path = home.join(".claude");
+        if home_path.exists() && home_path.is_dir() {
+            paths.push(home_path);
+        }
     }
     
-    // Filter for existing directories
-    paths.into_iter().filter(|p| p.exists() && p.is_dir()).collect()
+    paths
 }
 
-// Format currency
+// Format currency - simple and clean
+#[inline]
 fn format_currency(amount: f64) -> String {
     format!("${:.2}", amount)
 }
 
 // Format remaining time
-fn format_remaining_time(remaining_minutes: i64) -> String {
-    if remaining_minutes <= 0 {
-        return "0m left".to_string();
-    }
-    
-    let hours = remaining_minutes / 60;
+#[inline]
+fn format_remaining_time(remaining_minutes: u64) -> String {
     let mins = remaining_minutes % 60;
-    
-    if hours > 0 {
+    if remaining_minutes > 60 {
+        let hours = remaining_minutes / 60;
         format!("{}h {}m left", hours, mins)
     } else {
         format!("{}m left", mins)
     }
 }
 
-// Floor timestamp to hour (for block calculation)
+// Floor timestamp to hour
+#[inline]
 fn floor_to_hour(dt: DateTime<Utc>) -> DateTime<Utc> {
     dt.date_naive()
         .and_hms_opt(dt.hour(), 0, 0)
@@ -159,8 +165,30 @@ fn floor_to_hour(dt: DateTime<Utc>) -> DateTime<Utc> {
         .and_utc()
 }
 
-// Calculate cost from entry
-fn calculate_entry_cost(entry: &UsageEntry, _pricing_map: &HashMap<String, ModelPricing>) -> f64 {
+// Optimized duplicate detection
+#[inline]
+fn is_duplicate_fast(entry: &UsageEntry, processed_hashes: &mut HashSet<u64>) -> bool {
+    if let (Some(message), Some(request_id)) = (&entry.message, &entry.request_id) {
+        if let Some(message_id) = &message.id {
+            // Use hash instead of string concatenation
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            message_id.hash(&mut hasher);
+            request_id.hash(&mut hasher);
+            let hash = hasher.finish();
+            
+            if processed_hashes.contains(&hash) {
+                return true;
+            }
+            processed_hashes.insert(hash);
+        }
+    }
+    false
+}
+
+// Calculate cost from entry - optimized
+#[inline]
+fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
     // Check for pre-calculated cost
     if let Some(cost) = entry.cost_usd {
         return cost;
@@ -180,7 +208,7 @@ fn calculate_entry_cost(entry: &UsageEntry, _pricing_map: &HashMap<String, Model
                         cache_creation: usage.cache_creation_input_tokens,
                         cache_read: usage.cache_read_input_tokens,
                     };
-                    return calculate_cost(&tokens, &pricing);
+                    return calculate_cost(&tokens, pricing);
                 }
             }
         }
@@ -189,165 +217,212 @@ fn calculate_entry_cost(entry: &UsageEntry, _pricing_map: &HashMap<String, Model
     0.0
 }
 
-// Load session usage by ID
-async fn load_session_usage_by_id(session_id: &str) -> Result<Option<f64>> {
-    let claude_paths = get_claude_paths();
-    let mut total_cost = 0.0;
-    let mut found = false;
-    let mut processed_hashes = HashSet::new();
-    let pricing_map = get_model_pricing_map();
+// Process JSONL file efficiently
+fn process_jsonl_file(
+    path: &Path,
+    processor: impl Fn(&UsageEntry) -> Option<f64>,
+    processed_hashes: &mut HashSet<u64>,
+) -> Result<f64> {
+    let file = fs::File::open(path)?;
+    let reader = BufReader::with_capacity(64 * 1024, file); // 64KB buffer
+    let mut total = 0.0;
     
-    for base_path in claude_paths {
-        let projects_path = base_path.join("projects");
-        if !projects_path.exists() {
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
             continue;
         }
         
-        let mut dir = async_fs::read_dir(&projects_path).await?;
-        while let Some(entry) = dir.next_entry().await? {
-            if !entry.file_type().await?.is_dir() {
-                continue;
-            }
-            
-            let session_file = entry.path().join(format!("{}.jsonl", session_id));
-            if session_file.exists() {
-                let content = async_fs::read_to_string(&session_file).await?;
-                for line in content.lines() {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    
-                    if let Ok(entry) = serde_json::from_str::<UsageEntry>(line) {
-                        if !is_duplicate(&entry, &mut processed_hashes) {
-                            let cost = calculate_entry_cost(&entry, &pricing_map);
-                            if cost > 0.0 {
-                                total_cost += cost;
-                                found = true;
-                            }
-                        }
-                    }
+        if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) {
+            if !is_duplicate_fast(&entry, processed_hashes) {
+                if let Some(cost) = processor(&entry) {
+                    total += cost;
                 }
             }
         }
     }
     
-    Ok(if found { Some(total_cost) } else { None })
+    Ok(total)
 }
 
-// Load today's usage data
-async fn load_today_usage_data() -> Result<f64> {
+// Load session usage by ID - optimized
+async fn load_session_usage_by_id(session_id: &str) -> Result<Option<f64>> {
     let claude_paths = get_claude_paths();
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let mut total_cost = 0.0;
-    let mut processed_hashes = HashSet::new();
-    let pricing_map = get_model_pricing_map();
+    let session_id = session_id.to_string();
     
-    for base_path in claude_paths {
-        let projects_path = base_path.join("projects");
-        if !projects_path.exists() {
-            continue;
-        }
-        
-        let mut dir = async_fs::read_dir(&projects_path).await?;
-        while let Some(entry) = dir.next_entry().await? {
-            if !entry.file_type().await?.is_dir() {
-                continue;
+    // Process paths in parallel
+    let tasks: Vec<_> = claude_paths.into_iter().map(|base_path| {
+        let session_id = session_id.clone();
+        task::spawn_blocking(move || {
+            let projects_path = base_path.join("projects");
+            if !projects_path.exists() {
+                return Ok(0.0);
             }
             
-            let mut session_dir = async_fs::read_dir(entry.path()).await?;
-            while let Some(file) = session_dir.next_entry().await? {
-                let file_name = file.file_name();
-                let file_name_str = file_name.to_string_lossy();
-                
-                if !file_name_str.ends_with(".jsonl") {
+            let mut total_cost = 0.0;
+            let mut processed_hashes = HashSet::with_capacity(1000);
+            
+            for entry in fs::read_dir(&projects_path)? {
+                let entry = entry?;
+                if !entry.file_type()?.is_dir() {
                     continue;
                 }
                 
-                let content = async_fs::read_to_string(file.path()).await?;
-                for line in content.lines() {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    
-                    if let Ok(entry) = serde_json::from_str::<UsageEntry>(line) {
-                        if let Some(timestamp) = &entry.timestamp {
-                            if timestamp.starts_with(&today) {
-                                if !is_duplicate(&entry, &mut processed_hashes) {
-                                    let cost = calculate_entry_cost(&entry, &pricing_map);
-                                    total_cost += cost;
-                                }
-                            }
-                        }
+                let session_file = entry.path().join(format!("{}.jsonl", session_id));
+                if session_file.exists() {
+                    total_cost += process_jsonl_file(
+                        &session_file,
+                        |e| Some(calculate_entry_cost(e)),
+                        &mut processed_hashes,
+                    )?;
+                }
+            }
+            
+            Ok::<f64, anyhow::Error>(total_cost)
+        })
+    }).collect();
+    
+    let mut total = 0.0;
+    for task in tasks {
+        total += task.await??;
+    }
+    
+    Ok(if total > 0.0 { Some(total) } else { None })
+}
+
+// Load today's usage data - optimized
+async fn load_today_usage_data() -> Result<f64> {
+    let claude_paths = get_claude_paths();
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    
+    // Process paths in parallel
+    let tasks: Vec<_> = claude_paths.into_iter().map(|base_path| {
+        let today = today.clone();  // Simple clone of 10-char string
+        task::spawn_blocking(move || {
+            let projects_path = base_path.join("projects");
+            if !projects_path.exists() {
+                return Ok(0.0);
+            }
+            
+            let mut total_cost = 0.0;
+            
+            // Collect all JSONL files first
+            let mut jsonl_files = Vec::new();
+            for project_entry in fs::read_dir(&projects_path)? {
+                let project_entry = project_entry?;
+                if !project_entry.file_type()?.is_dir() {
+                    continue;
+                }
+                
+                for file_entry in fs::read_dir(project_entry.path())? {
+                    let file_entry = file_entry?;
+                    let file_name = file_entry.file_name();
+                    if file_name.to_string_lossy().ends_with(".jsonl") {
+                        jsonl_files.push(file_entry.path());
                     }
                 }
             }
-        }
+            
+            // Process files in parallel using rayon
+            let file_results: Vec<_> = jsonl_files.par_iter().map(|path| {
+                let mut local_hashes = HashSet::with_capacity(100);
+                process_jsonl_file(
+                    path,
+                    |entry| {
+                        if let Some(timestamp) = &entry.timestamp {
+                            if timestamp.starts_with(&today) {
+                                return Some(calculate_entry_cost(entry));
+                            }
+                        }
+                        None
+                    },
+                    &mut local_hashes,
+                )
+            }).collect();
+            
+            for result in file_results {
+                total_cost += result?;
+            }
+            
+            Ok::<f64, anyhow::Error>(total_cost)
+        })
+    }).collect();
+    
+    let mut total = 0.0;
+    for task in tasks {
+        total += task.await??;
     }
     
-    Ok(total_cost)
+    Ok(total)
 }
 
 // Active block info
 struct BlockInfo {
     block_cost: f64,
     burn_rate_per_hour: Option<f64>,
-    remaining_minutes: i64,
+    remaining_minutes: u64,
 }
 
-// Load active block (5-hour window)
+// Load active block - optimized
 async fn load_active_block() -> Result<Option<BlockInfo>> {
     let claude_paths = get_claude_paths();
     let now = Utc::now();
     let five_hours = chrono::Duration::hours(5);
     
-    let mut recent_entries = Vec::new();
-    let mut block_start_time: Option<DateTime<Utc>> = None;
-    let mut total_cost = 0.0;
-    let mut processed_hashes = HashSet::new();
-    let pricing_map = get_model_pricing_map();
-    
-    for base_path in claude_paths {
-        let projects_path = base_path.join("projects");
-        if !projects_path.exists() {
-            continue;
-        }
-        
-        let mut dir = async_fs::read_dir(&projects_path).await?;
-        while let Some(entry) = dir.next_entry().await? {
-            if !entry.file_type().await?.is_dir() {
-                continue;
+    // Process paths in parallel
+    let tasks: Vec<_> = claude_paths.into_iter().map(|base_path| {
+        task::spawn_blocking(move || {
+            let projects_path = base_path.join("projects");
+            if !projects_path.exists() {
+                return Ok(None);
             }
             
-            let mut session_dir = async_fs::read_dir(entry.path()).await?;
-            while let Some(file) = session_dir.next_entry().await? {
-                let file_name = file.file_name();
-                let file_name_str = file_name.to_string_lossy();
-                
-                if !file_name_str.ends_with(".jsonl") {
+            let mut recent_entries = Vec::with_capacity(1000);
+            let mut block_start_time: Option<DateTime<Utc>> = None;
+            let mut total_cost = 0.0;
+            let mut processed_hashes: HashSet<u64> = HashSet::with_capacity(5000);
+            
+            // Collect all JSONL files
+            let mut jsonl_files = Vec::new();
+            for project_entry in fs::read_dir(&projects_path)? {
+                let project_entry = project_entry?;
+                if !project_entry.file_type()?.is_dir() {
                     continue;
                 }
                 
-                let content = async_fs::read_to_string(file.path()).await?;
-                for line in content.lines() {
+                for file_entry in fs::read_dir(project_entry.path())? {
+                    let file_entry = file_entry?;
+                    if file_entry.file_name().to_string_lossy().ends_with(".jsonl") {
+                        jsonl_files.push(file_entry.path());
+                    }
+                }
+            }
+            
+            // Process files
+            for path in jsonl_files {
+                let file = fs::File::open(&path)?;
+                let reader = BufReader::with_capacity(64 * 1024, file);
+                
+                for line in reader.lines() {
+                    let line = line?;
                     if line.trim().is_empty() {
                         continue;
                     }
                     
-                    if let Ok(entry) = serde_json::from_str::<UsageEntry>(line) {
+                    if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) {
                         if let Some(timestamp_str) = &entry.timestamp {
                             if let Ok(entry_time) = timestamp_str.parse::<DateTime<Utc>>() {
                                 let time_since = now.signed_duration_since(entry_time);
                                 
                                 if time_since <= five_hours {
-                                    if !is_duplicate(&entry, &mut processed_hashes) {
-                                        recent_entries.push(entry.clone());
-                                        
+                                    if !is_duplicate_fast(&entry, &mut processed_hashes) {
                                         if block_start_time.is_none() || entry_time < block_start_time.unwrap() {
                                             block_start_time = Some(entry_time);
                                         }
                                         
-                                        let cost = calculate_entry_cost(&entry, &pricing_map);
+                                        let cost = calculate_entry_cost(&entry);
                                         total_cost += cost;
+                                        recent_entries.push(entry);
                                     }
                                 }
                             }
@@ -355,35 +430,56 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
                     }
                 }
             }
+            
+            if recent_entries.is_empty() || block_start_time.is_none() {
+                return Ok(None);
+            }
+            
+            // Calculate block info
+            let block_start = floor_to_hour(block_start_time.unwrap());
+            let block_end = block_start + five_hours;
+            let remaining = block_end.signed_duration_since(now);
+            let remaining_minutes = remaining.num_minutes().max(0) as u64;
+            
+            let elapsed_minutes = now.signed_duration_since(block_start).num_minutes() as f64;
+            let burn_rate = if elapsed_minutes > 5.0 {
+                Some((total_cost / elapsed_minutes) * 60.0)
+            } else {
+                None
+            };
+            
+            Ok::<Option<BlockInfo>, anyhow::Error>(Some(BlockInfo {
+                block_cost: total_cost,
+                burn_rate_per_hour: burn_rate,
+                remaining_minutes,
+            }))
+        })
+    }).collect();
+    
+    // Combine results from all paths
+    let mut final_block: Option<BlockInfo> = None;
+    for task in tasks {
+        if let Some(block) = task.await?? {
+            if let Some(ref mut fb) = final_block {
+                fb.block_cost += block.block_cost;
+                // Keep the earliest remaining time
+                if block.remaining_minutes < fb.remaining_minutes {
+                    fb.remaining_minutes = block.remaining_minutes;
+                }
+                // Recalculate burn rate if needed
+                if let (Some(br1), Some(br2)) = (fb.burn_rate_per_hour, block.burn_rate_per_hour) {
+                    fb.burn_rate_per_hour = Some((br1 + br2) / 2.0);
+                }
+            } else {
+                final_block = Some(block);
+            }
         }
     }
     
-    if recent_entries.is_empty() || block_start_time.is_none() {
-        return Ok(None);
-    }
-    
-    // Floor block start time to hour
-    let block_start = floor_to_hour(block_start_time.unwrap());
-    let block_end = block_start + five_hours;
-    let remaining = block_end.signed_duration_since(now);
-    let remaining_minutes = remaining.num_minutes();
-    
-    // Calculate burn rate
-    let elapsed_minutes = now.signed_duration_since(block_start).num_minutes() as f64;
-    let burn_rate = if elapsed_minutes > 5.0 {
-        Some((total_cost / elapsed_minutes) * 60.0)
-    } else {
-        None
-    };
-    
-    Ok(Some(BlockInfo {
-        block_cost: total_cost,
-        burn_rate_per_hour: burn_rate,
-        remaining_minutes,
-    }))
+    Ok(final_block)
 }
 
-// Get git branch
+// Get git branch - optimized
 async fn get_git_branch(cwd: &Path) -> Option<String> {
     let head_path = cwd.join(".git").join("HEAD");
     
@@ -404,55 +500,34 @@ async fn get_git_branch(cwd: &Path) -> Option<String> {
     None
 }
 
-// Calculate context tokens
+// Calculate context tokens - optimized
 async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
-    if let Ok(content) = async_fs::read_to_string(transcript_path).await {
-        // Approximate: 1 token ≈ 4 characters
-        let estimated_tokens = content.len() / 4;
+    if let Ok(metadata) = async_fs::metadata(transcript_path).await {
+        // Use file size instead of reading entire file
+        let file_size = metadata.len() as usize;
+        let estimated_tokens = file_size / 4;
         let max_tokens = 200_000;
         let percentage = (estimated_tokens * 100) / max_tokens;
         
+        let percentage_str = format!("{}%", percentage);
         let percentage_str = if percentage < 50 {
-            format!("{}%", percentage).green()
+            percentage_str.green()
         } else if percentage < 80 {
-            format!("{}%", percentage).yellow()
+            percentage_str.yellow()
         } else {
-            format!("{}%", percentage).red()
+            percentage_str.red()
+        };
+
+        // Simple number formatting
+        let formatted = if estimated_tokens >= 1000 {
+            format!("{}k", estimated_tokens / 1000)
+        } else {
+            estimated_tokens.to_string()
         };
         
-        Some(format!("{} ({})", estimated_tokens.to_formatted_string(&Locale::en()), percentage_str))
+        Some(format!("{} ({})", formatted, percentage_str))
     } else {
         None
-    }
-}
-
-// Locale formatting helper
-struct Locale;
-
-impl Locale {
-    const fn en() -> Self { Locale }
-}
-
-trait LocaleFormat {
-    fn to_formatted_string(&self, locale: &Locale) -> String;
-}
-
-impl LocaleFormat for usize {
-    fn to_formatted_string(&self, _locale: &Locale) -> String {
-        let s = self.to_string();
-        let mut result = String::new();
-        let mut count = 0;
-        
-        for c in s.chars().rev() {
-            if count == 3 {
-                result.push(',');
-                count = 0;
-            }
-            result.push(c);
-            count += 1;
-        }
-        
-        result.chars().rev().collect()
     }
 }
 
