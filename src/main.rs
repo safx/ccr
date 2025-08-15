@@ -532,6 +532,9 @@ async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Force colored output even when not in a TTY
+    colored::control::set_override(true);
+    
     // Read input JSON from stdin
     let mut buffer = String::new();
     io::stdin().read_to_string(&mut buffer)?;
