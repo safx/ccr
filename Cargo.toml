@@ -15,3 +15,11 @@ rayon = "1.10"
 [dev-dependencies]
 tempfile = "3.14"
 mockall = "0.13"
+
+[profile.release]
+opt-level = 3           # Maximum optimization
+lto = "fat"            # Enable Link Time Optimization for better performance
+codegen-units = 1      # Single codegen unit for better optimization
+panic = "abort"        # Smaller binary, slightly faster
+strip = true           # Strip symbols for smaller binary
+overflow-checks = false # Disable overflow checks in release
