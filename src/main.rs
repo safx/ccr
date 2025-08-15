@@ -73,6 +73,33 @@ struct ModelInfo {
     display_name: String,
 }
 
+// Transcript message structure for parsing JSONL
+#[derive(Debug, Deserialize)]
+struct TranscriptMessage {
+    #[serde(rename = "type")]
+    message_type: String,
+    #[serde(default)]
+    message: Option<TranscriptMessageContent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptMessageContent {
+    #[serde(default)]
+    usage: Option<TranscriptUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptUsage {
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    output_tokens: Option<u64>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
+}
+
 // Optimized model pricing lookup
 fn get_model_pricing(model_name: &str) -> Option<&'static ModelPricing> {
     // Direct match first
@@ -135,6 +162,25 @@ fn get_claude_paths() -> Vec<PathBuf> {
 #[inline]
 fn format_currency(amount: f64) -> String {
     format!("${:.2}", amount)
+}
+
+// Format number with thousands separator (like toLocaleString)
+#[inline]
+fn format_number_with_commas(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let mut count = 0;
+    
+    for c in s.chars().rev() {
+        if count == 3 {
+            result.push(',');
+            count = 0;
+        }
+        result.push(c);
+        count += 1;
+    }
+    
+    result.chars().rev().collect()
 }
 
 // Format remaining time
@@ -575,35 +621,61 @@ async fn get_git_branch(cwd: &Path) -> Option<String> {
     None
 }
 
-// Calculate context tokens - optimized
+// Calculate context tokens from JSONL transcript - matching ccusage implementation
 async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
-    if let Ok(metadata) = async_fs::metadata(transcript_path).await {
-        // Use file size instead of reading entire file
-        let file_size = metadata.len() as usize;
-        let estimated_tokens = file_size / 4;
-        let max_tokens = 200_000;
-        let percentage = (estimated_tokens * 100) / max_tokens;
+    // Try to read the file
+    let content = match async_fs::read_to_string(transcript_path).await {
+        Ok(content) => content,
+        Err(_) => return None,
+    };
+    
+    // Parse JSONL lines from last to first (most recent usage info)
+    let lines: Vec<&str> = content.lines().rev().collect();
+    
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
         
-        let percentage_str = format!("{}%", percentage);
-        let percentage_str = if percentage < 50 {
-            percentage_str.green()
-        } else if percentage < 80 {
-            percentage_str.yellow()
-        } else {
-            percentage_str.red()
-        };
-
-        // Simple number formatting
-        let formatted = if estimated_tokens >= 1000 {
-            format!("{}k", estimated_tokens / 1000)
-        } else {
-            estimated_tokens.to_string()
-        };
-        
-        Some(format!("{} ({})", formatted, percentage_str))
-    } else {
-        None
+        // Try to parse as TranscriptMessage
+        if let Ok(msg) = serde_json::from_str::<TranscriptMessage>(trimmed) {
+            // Check if this is an assistant message with usage info
+            if msg.message_type == "assistant" {
+                if let Some(message) = msg.message {
+                    if let Some(usage) = message.usage {
+                        if let Some(input_tokens) = usage.input_tokens {
+                            // Calculate total input tokens including cache
+                            let total_input = input_tokens
+                                + usage.cache_creation_input_tokens.unwrap_or(0)
+                                + usage.cache_read_input_tokens.unwrap_or(0);
+                            
+                            // Calculate percentage (capped at 100% for display)
+                            let max_tokens = 200_000;
+                            let percentage = ((total_input as usize * 100) / max_tokens).min(9999);
+                            
+                            let percentage_str = format!("{}%", percentage);
+                            let percentage_str = if percentage < 50 {
+                                percentage_str.green()
+                            } else if percentage < 80 {
+                                percentage_str.yellow()
+                            } else {
+                                percentage_str.red()
+                            };
+                            
+                            // Format with thousands separator
+                            let formatted = format_number_with_commas(total_input as usize);
+                            
+                            return Some(format!("{} ({})", formatted, percentage_str));
+                        }
+                    }
+                }
+            }
+        }
     }
+    
+    // No valid usage information found
+    None
 }
 
 #[tokio::main]
