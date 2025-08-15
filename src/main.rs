@@ -1,11 +1,10 @@
-use anyhow::{Context, Result};
 use chrono::{DateTime, Utc, Timelike};
-use clap::Parser;
 use colored::*;
 use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -15,6 +14,9 @@ use tokio::task;
 
 // Re-use structures from lib.rs
 use ccr::{ModelPricing, TokenUsage, UsageEntry, calculate_cost};
+
+// Simple Result type alias with Send + Sync for async
+type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 // Static model pricing data - initialized once
 static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::new(|| {
@@ -50,15 +52,6 @@ static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::
     
     map
 });
-
-// CLI arguments
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Path to JSON input (reads from stdin if not provided)
-    #[arg(short, long)]
-    input: Option<PathBuf>,
-}
 
 // Hook input schema
 #[derive(Debug, Deserialize)]
@@ -253,7 +246,7 @@ async fn load_session_usage_by_id(session_id: &str) -> Result<Option<f64>> {
     // Process paths in parallel
     let tasks: Vec<_> = claude_paths.into_iter().map(|base_path| {
         let session_id = session_id.clone();
-        task::spawn_blocking(move || {
+        task::spawn_blocking(move || -> Result<f64> {
             let projects_path = base_path.join("projects");
             if !projects_path.exists() {
                 return Ok(0.0);
@@ -278,7 +271,7 @@ async fn load_session_usage_by_id(session_id: &str) -> Result<Option<f64>> {
                 }
             }
             
-            Ok::<f64, anyhow::Error>(total_cost)
+            Ok(total_cost)
         })
     }).collect();
     
@@ -298,7 +291,7 @@ async fn load_today_usage_data() -> Result<f64> {
     // Process paths in parallel
     let tasks: Vec<_> = claude_paths.into_iter().map(|base_path| {
         let today = today.clone();  // Simple clone of 10-char string
-        task::spawn_blocking(move || {
+        task::spawn_blocking(move || -> Result<f64> {
             let projects_path = base_path.join("projects");
             if !projects_path.exists() {
                 return Ok(0.0);
@@ -344,7 +337,7 @@ async fn load_today_usage_data() -> Result<f64> {
                 total_cost += result?;
             }
             
-            Ok::<f64, anyhow::Error>(total_cost)
+            Ok(total_cost)
         })
     }).collect();
     
@@ -371,7 +364,7 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
     
     // Process paths in parallel
     let tasks: Vec<_> = claude_paths.into_iter().map(|base_path| {
-        task::spawn_blocking(move || {
+        task::spawn_blocking(move || -> Result<Option<BlockInfo>> {
             let projects_path = base_path.join("projects");
             if !projects_path.exists() {
                 return Ok(None);
@@ -448,7 +441,7 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
                 None
             };
             
-            Ok::<Option<BlockInfo>, anyhow::Error>(Some(BlockInfo {
+            Ok(Some(BlockInfo {
                 block_cost: total_cost,
                 burn_rate_per_hour: burn_rate,
                 remaining_minutes,
@@ -533,19 +526,12 @@ async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    // Read input JSON from stdin
+    let mut buffer = String::new();
+    io::stdin().read_to_string(&mut buffer)?;
+    let input_json = buffer;
     
-    // Read input JSON
-    let input_json = if let Some(input_path) = args.input {
-        fs::read_to_string(input_path)?
-    } else {
-        let mut buffer = String::new();
-        io::stdin().read_to_string(&mut buffer)?;
-        buffer
-    };
-    
-    let hook_data: StatuslineHookJson = serde_json::from_str(&input_json)
-        .context("Failed to parse input JSON")?;
+    let hook_data: StatuslineHookJson = serde_json::from_str(&input_json)?;
     
     // Check Claude paths exist
     let claude_paths = get_claude_paths();
