@@ -222,9 +222,12 @@ async function loadSessionUsageById(sessionId: string): Promise<{ totalCost: num
 						try {
 							const entry = JSON.parse(line) as UsageEntry;
 							
-							// Create unique hash for deduplication
+							// Deduplication logic (exactly matching ccusage)
 							const messageId = entry.message?.id;
 							const requestId = entry.requestId;
+							
+							// Only perform deduplication if BOTH IDs exist
+							// If either is missing, skip deduplication (entry is kept)
 							if (messageId && requestId) {
 								const uniqueHash = `${messageId}:${requestId}`;
 								if (processedHashes.has(uniqueHash)) {
@@ -232,6 +235,7 @@ async function loadSessionUsageById(sessionId: string): Promise<{ totalCost: num
 								}
 								processedHashes.add(uniqueHash);
 							}
+							// If either ID is missing, keep the entry (no deduplication check)
 							
 							// First check for pre-calculated costUSD
 							if (entry.costUSD) {
@@ -301,13 +305,17 @@ async function loadTodayUsageData(): Promise<number> {
 								// Create unique hash for deduplication
 								const messageId = entry.message?.id;
 								const requestId = entry.requestId;
-								if (messageId && requestId) {
-									const uniqueHash = `${messageId}:${requestId}`;
-									if (processedHashes.has(uniqueHash)) {
-										continue; // Skip duplicate
-									}
-									processedHashes.add(uniqueHash);
+								
+								// Skip entries without proper IDs (following ccusage logic)
+								if (!messageId || !requestId) {
+									continue;
 								}
+								
+								const uniqueHash = `${messageId}:${requestId}`;
+								if (processedHashes.has(uniqueHash)) {
+									continue; // Skip duplicate
+								}
+								processedHashes.add(uniqueHash);
 								
 								// Check for pre-calculated costUSD
 								if (entry.costUSD) {
@@ -380,22 +388,51 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 					for (const line of lines) {
 						try {
 							const entry = JSON.parse(line) as UsageEntry;
-							if (entry.timestamp) {
-								const entryTime = new Date(entry.timestamp);
-								
-								// Create unique hash for deduplication
-								const messageId = entry.message?.id;
-								const requestId = entry.requestId;
-								if (messageId && requestId) {
-									const uniqueHash = `${messageId}:${requestId}`;
-									if (processedHashes.has(uniqueHash)) {
-										continue; // Skip duplicate
-									}
-									processedHashes.add(uniqueHash);
-								}
-								
-								allEntries.push({ entry, time: entryTime });
+							
+							// Validate timestamp (must be ISO format matching ccusage regex)
+							if (!entry.timestamp || typeof entry.timestamp !== 'string') {
+								continue;
 							}
+							// Check ISO format: YYYY-MM-DDTHH:MM:SS[.sss]Z
+							const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+							if (!isoRegex.test(entry.timestamp)) {
+								continue;
+							}
+							const entryTime = new Date(entry.timestamp);
+							if (isNaN(entryTime.getTime())) {
+								continue;
+							}
+							
+							// Validate message structure
+							if (!entry.message || typeof entry.message !== 'object') {
+								continue;
+							}
+							
+							// Validate usage data exists and has required fields
+							const usage = entry.message.usage;
+							if (!usage || typeof usage !== 'object') {
+								continue;
+							}
+							if (typeof usage.input_tokens !== 'number' || typeof usage.output_tokens !== 'number') {
+								continue;
+							}
+							
+							// Deduplication logic (exactly matching ccusage)
+							const messageId = entry.message?.id;
+							const requestId = entry.requestId;
+							
+							// Only perform deduplication if BOTH IDs exist
+							// If either is missing, skip deduplication (entry is kept)
+							if (messageId && requestId) {
+								const uniqueHash = `${messageId}:${requestId}`;
+								if (processedHashes.has(uniqueHash)) {
+									continue; // Skip duplicate
+								}
+								processedHashes.add(uniqueHash);
+							}
+							// If either ID is missing, keep the entry (no deduplication check)
+							
+							allEntries.push({ entry, time: entryTime });
 						} catch {
 							// Skip invalid lines
 						}
@@ -410,7 +447,7 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 	// Sort entries by timestamp
 	allEntries.sort((a, b) => a.time.getTime() - b.time.getTime());
 	
-	// Identify session blocks (similar to ccusage logic)
+	// Identify session blocks (exactly matching ccusage logic)
 	const blocks: { start: Date; entries: UsageEntry[]; actualEnd: Date }[] = [];
 	let currentBlockStart: Date | null = null;
 	let currentBlockEntries: UsageEntry[] = [];
@@ -421,27 +458,35 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 			currentBlockStart = floorToHour(time);
 			currentBlockEntries = [entry];
 		} else {
+			// Calculate time since block start (using floored time)
 			const timeSinceBlockStart = time.getTime() - currentBlockStart.getTime();
+			
+			// Get last entry time
 			const lastEntry = currentBlockEntries[currentBlockEntries.length - 1];
-			if (lastEntry && lastEntry.timestamp) {
-				const lastEntryTime = new Date(lastEntry.timestamp);
-				const timeSinceLastEntry = time.getTime() - lastEntryTime.getTime();
+			if (!lastEntry || !lastEntry.timestamp) {
+				continue;
+			}
+			const lastEntryTime = new Date(lastEntry.timestamp);
+			const timeSinceLastEntry = time.getTime() - lastEntryTime.getTime();
+			
+			// Check if we need to close the current block
+			if (timeSinceBlockStart > fiveHoursInMs || timeSinceLastEntry > fiveHoursInMs) {
+				// Close current block
+				blocks.push({
+					start: currentBlockStart,
+					entries: currentBlockEntries,
+					actualEnd: lastEntryTime
+				});
 				
-				if (timeSinceBlockStart > fiveHoursInMs || timeSinceLastEntry > fiveHoursInMs) {
-					// Close current block
-					blocks.push({
-						start: currentBlockStart,
-						entries: currentBlockEntries,
-						actualEnd: lastEntryTime
-					});
-					
-					// Start new block (floored to the hour)
-					currentBlockStart = floorToHour(time);
-					currentBlockEntries = [entry];
-				} else {
-					// Add to current block
-					currentBlockEntries.push(entry);
-				}
+				// Note: Could add gap block logic here if timeSinceLastEntry > fiveHoursInMs
+				// But for statusline we only care about active blocks
+				
+				// Start new block (floored to the hour)
+				currentBlockStart = floorToHour(time);
+				currentBlockEntries = [entry];
+			} else {
+				// Add to current block
+				currentBlockEntries.push(entry);
 			}
 		}
 	}
@@ -458,15 +503,21 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 		}
 	}
 	
-	// Find the active block
+	// Find the active block (exactly matching ccusage isActive logic)
 	let activeBlock: { start: Date; entries: UsageEntry[]; actualEnd: Date } | null = null;
 	for (const block of blocks) {
+		// Block end time is start + 5 hours
 		const blockEndTime = new Date(block.start.getTime() + fiveHoursInMs);
+		
+		// Time since last activity in the block
 		const timeSinceLastActivity = now.getTime() - block.actualEnd.getTime();
+		
+		// Active if: last activity within 5 hours AND current time before block end
 		const isActive = timeSinceLastActivity < fiveHoursInMs && now < blockEndTime;
 		
 		if (isActive) {
 			activeBlock = block;
+			// Keep looking for the most recent active block
 		}
 	}
 	
@@ -474,15 +525,16 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 		return { blockInfo: "No active block", burnRateInfo: "", remainingInfo: "" };
 	}
 	
-	// Calculate total cost for the active block
+	
+	// Calculate total cost for the active block (using auto mode logic like ccusage)
 	let totalCost = 0;
 	for (const entry of activeBlock.entries) {
-		// Check for pre-calculated costUSD
-		if (entry.costUSD) {
+		// Auto mode: prefer costUSD if available, otherwise calculate from tokens
+		if (entry.costUSD !== undefined && entry.costUSD !== null) {
+			// Use pre-calculated costUSD (display mode behavior)
 			totalCost += entry.costUSD;
-		}
-		// Otherwise calculate from usage data
-		else if (entry.message?.usage) {
+		} else if (entry.message?.usage) {
+			// Calculate from usage data (calculate mode behavior)
 			const usage = entry.message.usage;
 			const modelName = entry.message.model || entry.model;
 			const pricing = getModelPricing(modelName);
@@ -498,46 +550,54 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 				totalCost += cost;
 			}
 		}
+		// If both fail, contribute 0 to totalCost (already handled by +=)
 	}
 	
 	// Calculate block end time
 	const blockEndTime = new Date(activeBlock.start.getTime() + fiveHoursInMs);
 	const remaining = Math.round((blockEndTime.getTime() - now.getTime()) / (1000 * 60));
 	
-	// Calculate burn rate (based on actual activity duration, not block duration)
+	// Calculate burn rate (exactly matching ccusage calculateBurnRate logic)
 	let burnRateInfo = "";
 	
-	if (activeBlock.entries.length > 0) {
+	// Check if block has entries (skip if empty or gap block)
+	if (activeBlock.entries.length === 0) {
+		burnRateInfo = "";
+	} else {
 		const firstEntry = activeBlock.entries[0];
 		const lastEntry = activeBlock.entries[activeBlock.entries.length - 1];
 		
-		if (firstEntry?.timestamp && lastEntry?.timestamp) {
+		if (!firstEntry?.timestamp || !lastEntry?.timestamp) {
+			burnRateInfo = "";
+		} else {
 			const firstEntryTime = new Date(firstEntry.timestamp);
 			const lastEntryTime = new Date(lastEntry.timestamp);
 			const durationMinutes = (lastEntryTime.getTime() - firstEntryTime.getTime()) / (1000 * 60);
 			
-			// Only show burn rate if there's meaningful duration
-			if (durationMinutes > 0) {
+			// Skip if duration is 0 or negative
+			if (durationMinutes <= 0) {
+				burnRateInfo = "";
+			} else {
+				// Calculate cost per hour
 				const costPerHour = (totalCost / durationMinutes) * 60;
 				const costPerHourStr = `${formatCurrency(costPerHour)}/hr`;
 				
-				// Calculate non-cache tokens for burn rate indicator
+				// Calculate non-cache tokens for burn rate indicator (matching ccusage)
 				let nonCacheTokens = 0;
 				for (const entry of activeBlock.entries) {
 					if (entry.message?.usage) {
+						// Only count input and output tokens, not cache tokens
 						nonCacheTokens += (entry.message.usage.input_tokens || 0) + (entry.message.usage.output_tokens || 0);
-					} else if (entry.inputTokens || entry.outputTokens) {
-						nonCacheTokens += (entry.inputTokens || 0) + (entry.outputTokens || 0);
 					}
 				}
 				const tokensPerMinuteForIndicator = nonCacheTokens / durationMinutes;
 				
-				// Burn rate coloring based on tokens per minute (matching ccusage logic)
+				// Burn rate coloring based on tokens per minute (exact thresholds from ccusage)
 				const coloredBurnRate = tokensPerMinuteForIndicator < 2000
-					? green(costPerHourStr)  // Normal
+					? green(costPerHourStr)  // Normal (< 2000)
 					: tokensPerMinuteForIndicator < 5000
-						? yellow(costPerHourStr)  // Moderate
-						: red(costPerHourStr);  // High
+						? yellow(costPerHourStr)  // Moderate (2000-5000)
+						: red(costPerHourStr);  // High (> 5000)
 				
 				burnRateInfo = `${coloredBurnRate}`;
 			}
