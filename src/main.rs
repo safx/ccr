@@ -56,39 +56,44 @@ async fn main() -> Result<()> {
 
     // Calculate active block
     let blocks = identify_session_blocks(usage_snapshot.all_entries.clone(), &MODEL_PRICING);
-    let active_block = find_active_block(&blocks);
-
-    // Format output
-    let current_dir = Path::new(&hook_data.cwd)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&hook_data.cwd)
-        .green();
-
-    let branch_display = if let Some(branch) = git_branch {
-        format!(" {}", branch.cyan())
+    let (block_cost, burn_rate, remaining_minutes) = if let Some(block) = find_active_block(&blocks)
+    {
+        (
+            block.cost_usd,
+            calculate_burn_rate(block),
+            block
+                .end_time
+                .signed_duration_since(Utc::now())
+                .num_minutes()
+        )
     } else {
-        String::new()
+        (0.0, None, 0)
     };
 
-    let model_name = &hook_data.model.display_name;
-    let is_opus = model_name.to_lowercase().contains("opus");
-    let colored_model = if is_opus {
-        model_name.white()
-    } else {
-        model_name.yellow().bold()
-    };
-
-    let session_display = format_currency(session_cost);
-
-    let (block_display, burn_rate_display, remaining_display) = if let Some(block) = active_block {
-        let now = Utc::now();
-        let remaining = block.end_time.signed_duration_since(now);
-        let remaining_minutes = remaining.num_minutes().max(0) as u64;
-
-        let block_str = format!("{} block", format_currency(block.cost_usd));
-
-        let burn_str = if let Some(rate) = calculate_burn_rate(block) {
+    // Build and print status line
+    println!(
+        "{reset_color}{current_dir}{branch} 👤 {model}{reset_color}{remaining} 💰 {today} today, {session} session, {block}{burn_rate}{context}",
+        reset_color = "\x1b[0m",
+        current_dir = get_current_dir(&hook_data.cwd),
+        branch = if let Some(branch) = git_branch {
+            format!(" {}", branch.cyan())
+        } else {
+            String::new()
+        },
+        model = model_name(&hook_data.model.display_name),
+        remaining = if remaining_minutes > 0 {
+            format!(" ⏰ {}", format_remaining_time(remaining_minutes).magenta())
+        } else {
+            String::new()
+        },
+        today = format_currency(today_cost),
+        session = format_currency(session_cost),
+        block = if block_cost > 0.0 {
+            format!("{} block", format_currency(block_cost))
+        } else {
+            String::new()
+        },
+        burn_rate = if let Some(rate) = burn_rate {
             let rate_str = format!("{}/hr", format_currency(rate));
             let colored_rate = if rate < 30.0 {
                 rate_str.green()
@@ -100,35 +105,32 @@ async fn main() -> Result<()> {
             format!(" 🔥 {}", colored_rate)
         } else {
             String::new()
-        };
-
-        let remaining = format!(" ⏰ {}", format_remaining_time(remaining_minutes).magenta());
-
-        (block_str, burn_str, remaining)
-    } else {
-        ("No active block".to_string(), String::new(), String::new())
-    };
-
-    let context_display = if let Some(ctx) = context_info {
-        format!(" ⚖️ {}", ctx)
-    } else {
-        String::new()
-    };
-
-    // Build and print status line
-    print!("\x1b[0m"); // Reset color
-    print!("{}{} 👤 {}", current_dir, branch_display, colored_model);
-    print!("\x1b[0m"); // Reset after model name
-    print!(
-        "{} 💰 {} today, {} session, {}{}{}",
-        remaining_display,
-        format_currency(today_cost),
-        session_display,
-        block_display,
-        burn_rate_display,
-        context_display
+        },
+        context = if let Some(ctx) = context_info {
+            format!(" ⚖️ {}", ctx)
+        } else {
+            String::new()
+        },
     );
-    println!();
 
     Ok(())
+}
+
+#[inline]
+fn model_name(model: &str) -> ColoredString {
+    let is_opus = model.to_lowercase().contains("opus");
+    if is_opus {
+        model.white()
+    } else {
+        model.yellow().bold()
+    }
+}
+
+#[inline]
+fn get_current_dir(cwd: &str) -> ColoredString {
+    Path::new(cwd)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(cwd)
+        .green()
 }

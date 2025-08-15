@@ -22,10 +22,8 @@ pub fn format_number_with_commas(n: usize) -> String {
 }
 
 // Format remaining time
-pub fn format_remaining_time(minutes: u64) -> String {
-    if minutes == 0 {
-        "Block expired".to_string()
-    } else if minutes < 60 {
+pub fn format_remaining_time(minutes: i64) -> String {
+    if minutes < 60 {
         format!("{}m left", minutes)
     } else {
         let hours = minutes / 60;
