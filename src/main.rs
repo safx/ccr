@@ -10,9 +10,9 @@ use std::sync::LazyLock;
 use tokio::fs as async_fs;
 
 // Re-use structures from lib.rs
-use ccr::{ModelPricing, session_blocks, unified_loader};
+use ccr::{ModelPricing, loader, session_blocks};
+use loader::{calculate_session_cost, calculate_today_cost, load_all_data};
 use session_blocks::{calculate_burn_rate, find_active_block, identify_session_blocks};
-use unified_loader::{calculate_session_cost, calculate_today_cost, load_all_data_unified};
 
 // Simple Result type alias
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -175,21 +175,22 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Load ALL data ONCE
-    let (unified_data, git_branch) = tokio::join!(
-        load_all_data_unified(&claude_paths, &hook_data.session_id),
+    // Load usage snapshot
+    let (usage_snapshot, git_branch) = tokio::join!(
+        load_all_data(&claude_paths, &hook_data.session_id),
         get_git_branch(Path::new(&hook_data.cwd))
     );
 
-    let unified_data = unified_data?;
+    let usage_snapshot = usage_snapshot?;
 
-    // Calculate metrics from the unified data
-    let today_cost = calculate_today_cost(&unified_data, &MODEL_PRICING);
+    // Calculate metrics from the snapshot
+    let today_cost = calculate_today_cost(&usage_snapshot, &MODEL_PRICING);
     let session_cost =
-        calculate_session_cost(&unified_data, &hook_data.session_id, &MODEL_PRICING).unwrap_or(0.0);
+        calculate_session_cost(&usage_snapshot, &hook_data.session_id, &MODEL_PRICING)
+            .unwrap_or(0.0);
 
     // Calculate active block
-    let blocks = identify_session_blocks(unified_data.all_entries.clone(), &MODEL_PRICING);
+    let blocks = identify_session_blocks(usage_snapshot.all_entries.clone(), &MODEL_PRICING);
     let active_block = find_active_block(&blocks);
 
     // Format output

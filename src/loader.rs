@@ -3,46 +3,45 @@ use rayon::prelude::*;
 use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::task;
 
 use crate::{ModelPricing, TokenUsage, UsageEntry, calculate_cost};
 
-/// Unified data loaded from all files
+/// Snapshot of usage data at a point in time
 #[derive(Debug, Clone)]
-pub struct UnifiedData {
-    /// All entries loaded from files
+pub struct UsageSnapshot {
     pub all_entries: Vec<UsageEntry>,
-    /// Entries indexed by session ID
     pub by_session: HashMap<String, Vec<UsageEntry>>,
-    /// Today's entries
     pub today_entries: Vec<UsageEntry>,
-    /// Deduplicated hashes
     pub processed_hashes: HashSet<String>,
 }
 
-/// Load all JSONL files once and process them
-pub async fn load_all_data_unified(
+/// Load all data with optimized parallelism
+pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &str,
-) -> Result<UnifiedData, Box<dyn std::error::Error + Send + Sync>> {
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let session_id = session_id.to_string();
+) -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
+    let today = Arc::new(Utc::now().format("%Y-%m-%d").to_string());
+    let target_session = Arc::new(session_id.to_string());
 
-    // Process each base path in parallel
+    // Use a shared mutex for deduplication across all threads
+    let global_hashes = Arc::new(Mutex::new(HashSet::with_capacity(100000)));
+
     let tasks: Vec<_> = claude_paths
         .iter()
         .map(|base_path| {
             let base_path = base_path.clone();
-            let today = today.clone();
-            let session_id = session_id.clone();
+            let today = Arc::clone(&today);
+            let target_session = Arc::clone(&target_session);
+            let global_hashes = Arc::clone(&global_hashes);
 
             task::spawn_blocking(
-                move || -> Result<UnifiedData, Box<dyn std::error::Error + Send + Sync>> {
+                move || -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
                     let projects_path = base_path.join("projects");
                     if !projects_path.exists() {
-                        return Ok(UnifiedData {
+                        return Ok(UsageSnapshot {
                             all_entries: Vec::new(),
                             by_session: HashMap::new(),
                             today_entries: Vec::new(),
@@ -50,8 +49,8 @@ pub async fn load_all_data_unified(
                         });
                     }
 
-                    // Collect all JSONL file paths first
-                    let mut jsonl_files = Vec::new();
+                    // Collect all file paths first
+                    let mut all_files = Vec::new();
                     for project_entry in fs::read_dir(&projects_path)? {
                         let project_entry = project_entry?;
                         if !project_entry.file_type()?.is_dir() {
@@ -63,121 +62,106 @@ pub async fn load_all_data_unified(
                             let file_name = file_entry.file_name();
                             let file_name_str = file_name.to_string_lossy();
                             if file_name_str.ends_with(".jsonl") {
-                                // Extract session ID from filename (e.g., "session123.jsonl" -> "session123")
                                 let session_from_file = file_name_str.trim_end_matches(".jsonl");
-                                jsonl_files
-                                    .push((file_entry.path(), session_from_file.to_string()));
+                                all_files.push((file_entry.path(), session_from_file.to_string()));
                             }
                         }
                     }
 
-                    // Process files in parallel using rayon
-                    let file_data: Vec<(String, Vec<UsageEntry>)> = jsonl_files
+                    // Process all files in parallel with line-level parallelism
+                    let results: Vec<_> = all_files
                         .par_iter()
-                        .with_min_len(5) // Process at least 5 files per thread
-                        .flat_map(|(path, filename)| match fs::File::open(path) {
-                            Ok(file) => {
-                                let reader = BufReader::with_capacity(256 * 1024, file);
+                        .map(|(path, session_file_id)| {
+                            // Read entire file into memory first for faster parsing
+                            match fs::read_to_string(path) {
+                                Ok(contents) => {
+                                    // Parse lines in parallel
+                                    let entries: Vec<UsageEntry> = contents
+                                        .par_lines()
+                                        .filter(|line| !line.trim().is_empty())
+                                        .filter_map(|line| serde_json::from_str(line).ok())
+                                        .collect();
 
-                                let mut entries = Vec::with_capacity(100);
-                                for line in reader.lines().map_while(Result::ok) {
-                                    if line.trim().is_empty() {
-                                        continue;
-                                    }
-
-                                    if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) {
-                                        entries.push(entry);
-                                    }
+                                    (session_file_id.clone(), entries)
                                 }
-                                vec![(filename.clone(), entries)]
-                            }
-                            Err(_) => {
-                                vec![]
+                                Err(_) => (session_file_id.clone(), Vec::new()),
                             }
                         })
                         .collect();
 
-                    // Now process all entries in memory
-                    let mut all_entries = Vec::new();
+                    // Process results with global deduplication
+                    let mut all_entries = Vec::with_capacity(50000);
                     let mut by_session: HashMap<String, Vec<UsageEntry>> = HashMap::new();
-                    let mut today_entries = Vec::new();
-                    let mut processed_hashes = HashSet::new();
+                    let mut today_entries = Vec::with_capacity(10000);
 
-                    for (session_file_id, entries) in file_data {
+                    for (session_file_id, entries) in results {
                         for entry in entries {
-                            // Deduplication check
-                            if let Some(message) = &entry.message
+                            // Global deduplication check
+                            let should_skip = if let Some(message) = &entry.message
                                 && let (Some(msg_id), Some(req_id)) =
                                     (&message.id, &entry.request_id)
                             {
                                 let hash = format!("{}:{}", msg_id, req_id);
-                                if processed_hashes.contains(&hash) {
-                                    continue; // Skip duplicate
+                                let mut hashes = global_hashes.lock().unwrap();
+                                if hashes.contains(&hash) {
+                                    true
+                                } else {
+                                    hashes.insert(hash);
+                                    false
                                 }
-                                processed_hashes.insert(hash);
+                            } else {
+                                false
+                            };
+
+                            if should_skip {
+                                continue;
                             }
 
                             // Check if it's today's entry
                             if let Some(timestamp) = &entry.timestamp
-                                && timestamp.starts_with(&today)
+                                && timestamp.starts_with(today.as_str())
                             {
                                 today_entries.push(entry.clone());
                             }
 
-                            // Check if it belongs to the session (based on filename)
-                            if session_file_id == session_id {
+                            // Check if it belongs to the target session
+                            if session_file_id == target_session.as_str() {
                                 by_session
-                                    .entry(session_id.clone())
+                                    .entry(target_session.to_string())
                                     .or_default()
                                     .push(entry.clone());
                             }
 
-                            // Add to all entries
                             all_entries.push(entry);
                         }
                     }
 
-                    Ok(UnifiedData {
+                    Ok(UsageSnapshot {
                         all_entries,
                         by_session,
                         today_entries,
-                        processed_hashes,
+                        processed_hashes: HashSet::new(), // Not needed as we use global
                     })
                 },
             )
         })
         .collect();
 
-    // Merge results from all tasks
-    let mut merged = UnifiedData {
-        all_entries: Vec::new(),
+    // Merge results from all base paths
+    let mut merged = UsageSnapshot {
+        all_entries: Vec::with_capacity(100000),
         by_session: HashMap::new(),
-        today_entries: Vec::new(),
-        processed_hashes: HashSet::new(),
+        today_entries: Vec::with_capacity(10000),
+        processed_hashes: Arc::try_unwrap(global_hashes)
+            .map(|mutex| mutex.into_inner().unwrap())
+            .unwrap_or_else(|arc| arc.lock().unwrap().clone()),
     };
 
     for task in tasks {
         let data = task.await??;
-
-        // Merge all entries
-        for entry in data.all_entries {
-            // Check for duplicates across different base paths
-            if let Some(message) = &entry.message
-                && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.request_id)
-            {
-                let hash = format!("{}:{}", msg_id, req_id);
-                if merged.processed_hashes.contains(&hash) {
-                    continue;
-                }
-                merged.processed_hashes.insert(hash);
-            }
-            merged.all_entries.push(entry);
-        }
-
-        // Merge today's entries (already deduplicated)
+        merged.all_entries.extend(data.all_entries);
         merged.today_entries.extend(data.today_entries);
 
-        // Merge session entries
         for (session_id, entries) in data.by_session {
             merged
                 .by_session
@@ -190,23 +174,26 @@ pub async fn load_all_data_unified(
     Ok(merged)
 }
 
-/// Calculate today's cost from unified data
-pub fn calculate_today_cost(data: &UnifiedData, pricing_map: &HashMap<&str, ModelPricing>) -> f64 {
+/// Calculate today's cost from usage snapshot
+pub fn calculate_today_cost(
+    data: &UsageSnapshot,
+    pricing_map: &HashMap<&str, ModelPricing>,
+) -> f64 {
     data.today_entries
-        .iter()
+        .par_iter() // Use parallel iterator for cost calculation
         .map(|entry| calculate_entry_cost(entry, pricing_map))
         .sum()
 }
 
-/// Calculate session cost from unified data
+/// Calculate session cost from usage snapshot
 pub fn calculate_session_cost(
-    data: &UnifiedData,
+    data: &UsageSnapshot,
     session_id: &str,
     pricing_map: &HashMap<&str, ModelPricing>,
 ) -> Option<f64> {
     data.by_session.get(session_id).map(|entries| {
         entries
-            .iter()
+            .par_iter() // Use parallel iterator for cost calculation
             .map(|entry| calculate_entry_cost(entry, pricing_map))
             .sum()
     })
@@ -214,12 +201,10 @@ pub fn calculate_session_cost(
 
 /// Calculate entry cost with pricing map
 fn calculate_entry_cost(entry: &UsageEntry, pricing_map: &HashMap<&str, ModelPricing>) -> f64 {
-    // Check for pre-calculated cost
     if let Some(cost) = entry.cost_usd {
         return cost;
     }
 
-    // Calculate from usage data
     if let Some(message) = &entry.message
         && let Some(usage) = &message.usage
     {
