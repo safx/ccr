@@ -61,33 +61,40 @@ pub fn identify_session_blocks(
             None => continue,
         };
         
-        // Check for duplicate
-        if let (Some(msg_id), Some(req_id)) = (&entry.message_id, &entry.request_id) {
-            let hash = format!("{}:{}", msg_id, req_id);
-            if processed_hashes.contains(&hash) {
-                continue;
+        // Check for duplicate (only when BOTH IDs exist)
+        if let Some(message) = &entry.message {
+            if let (Some(msg_id), Some(req_id)) = (&message.id, &entry.request_id) {
+                let hash = format!("{}:{}", msg_id, req_id);
+                if processed_hashes.contains(&hash) {
+                    continue;
+                }
+                processed_hashes.insert(hash);
             }
-            processed_hashes.insert(hash);
         }
+        // If either ID is missing, keep the entry (no deduplication)
         
-        // Calculate entry cost
+        // Calculate entry cost (prefer costUSD, fallback to calculating from tokens)
         let entry_cost = if let Some(cost) = entry.cost_usd {
             cost
-        } else if let Some(usage) = &entry.message_usage {
-            let model_name = entry.message_model.as_deref()
-                .or(entry.model.as_deref());
-            
-            if let Some(model_name) = model_name {
-                if let Some(pricing) = get_model_pricing(model_name, pricing_map) {
-                    calculate_cost(
-                        &TokenUsage {
-                            input_tokens: usage.input_tokens,
-                            output_tokens: usage.output_tokens,
-                            cache_creation_tokens: usage.cache_creation_input_tokens,
-                            cache_read_tokens: usage.cache_read_input_tokens,
-                        },
-                        pricing,
-                    )
+        } else if let Some(message) = &entry.message {
+            if let Some(usage) = &message.usage {
+                let model_name = message.model.as_deref()
+                    .or(entry.model.as_deref());
+                
+                if let Some(model_name) = model_name {
+                    if let Some(pricing) = get_model_pricing(model_name, pricing_map) {
+                        calculate_cost(
+                            &TokenUsage {
+                                input_tokens: usage.input_tokens,
+                                output_tokens: usage.output_tokens,
+                                cache_creation_tokens: usage.cache_creation_input_tokens,
+                                cache_read_tokens: usage.cache_read_input_tokens,
+                            },
+                            pricing,
+                        )
+                    } else {
+                        0.0
+                    }
                 } else {
                     0.0
                 }
@@ -191,14 +198,25 @@ pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
         return None;
     }
     
-    let elapsed = Utc::now().signed_duration_since(block.start_time);
-    let elapsed_minutes = elapsed.num_minutes() as f64;
+    // Get first and last entry timestamps
+    let first_entry = block.entries.first()?;
+    let last_entry = block.entries.last()?;
     
-    if elapsed_minutes > 5.0 {
-        Some((block.cost_usd / elapsed_minutes) * 60.0) // Cost per hour
-    } else {
-        None
+    let first_time = first_entry.timestamp.as_ref()
+        .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
+    let last_time = last_entry.timestamp.as_ref()
+        .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
+    
+    // Calculate duration from first to last entry (not from block start)
+    let duration_minutes = last_time.signed_duration_since(first_time).num_minutes() as f64;
+    
+    // Skip if duration is 0 or negative
+    if duration_minutes <= 0.0 {
+        return None;
     }
+    
+    // Calculate cost per hour
+    Some((block.cost_usd / duration_minutes) * 60.0)
 }
 
 /// Helper function to get model pricing
