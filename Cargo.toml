@@ -1,16 +1,16 @@
 [package]
 name = "ccr"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-tokio = { version = "1.42", features = ["full"] }
-colored = "2.2"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-chrono = "0.4"
+tokio = { version = "1.47", default-features = false, features = ["rt-multi-thread", "fs", "macros"] }
+colored = "3"
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4", default-features = false, features = ["now"] }
 home = "0.5"
-rayon = "1.10"
+rayon = "1.11"
 
 [dev-dependencies]
 tempfile = "3.14"
