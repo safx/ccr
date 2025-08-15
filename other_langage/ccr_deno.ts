@@ -37,7 +37,22 @@ interface UsageEntry {
 	costUSD?: number;
 	// Fields from actual Claude Code JSONL format
 	message?: {
+		id?: string;
 		model?: string;
+		usage?: {
+			input_tokens?: number;
+			output_tokens?: number;
+			cache_creation_input_tokens?: number;
+			cache_read_input_tokens?: number;
+		};
+	};
+	requestId?: string;
+}
+
+// Transcript message structure for parsing JSONL
+interface TranscriptMessage {
+	type: string;
+	message?: {
 		usage?: {
 			input_tokens?: number;
 			output_tokens?: number;
@@ -635,26 +650,52 @@ async function getGitBranch(cwd: string): Promise<string | null> {
 	}
 }
 
-// Calculate context tokens from transcript
+// Calculate context tokens from transcript (matching Rust implementation)
 async function calculateContextTokens(transcriptPath: string): Promise<string | null> {
 	try {
 		const content = await Deno.readTextFile(transcriptPath);
-		// Simple approximation: 1 token ≈ 4 characters
-		const estimatedTokens = Math.round(content.length / 4);
 		
-		// Assume 200k token limit for modern Claude models
-		const maxTokens = 200000;
-		const percentage = Math.round((estimatedTokens / maxTokens) * 100);
+		// Parse JSONL lines from last to first (most recent usage info)
+		const lines = content.trim().split('\n').reverse();
 		
-		// Color coding
-		const color = percentage < 50
-			? green
-			: percentage < 80
-				? yellow
-				: red;
-		const coloredPercentage = color(`${percentage}%`);
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			
+			try {
+				const msg = JSON.parse(trimmed) as TranscriptMessage;
+				
+				// Check if this is an assistant message with usage info
+				if (msg.type === "assistant" && msg.message?.usage?.input_tokens) {
+					const usage = msg.message.usage;
+					
+					// Calculate total input tokens including cache
+					const totalInput = (usage.input_tokens || 0) +
+						(usage.cache_creation_input_tokens || 0) +
+						(usage.cache_read_input_tokens || 0);
+					
+					// Calculate percentage (capped at 9999% for display)
+					const maxTokens = 200000;
+					const percentage = Math.min(Math.floor((totalInput * 100) / maxTokens), 9999);
+					
+					// Color coding
+					const percentageStr = `${percentage}%`;
+					const coloredPercentage = percentage < 50
+						? green(percentageStr)
+						: percentage < 80
+							? yellow(percentageStr)
+							: red(percentageStr);
+					
+					// Format with thousands separator
+					return `${totalInput.toLocaleString()} (${coloredPercentage})`;
+				}
+			} catch {
+				// Skip invalid lines
+			}
+		}
 		
-		return `${estimatedTokens.toLocaleString()} (${coloredPercentage})`;
+		// No valid usage information found
+		return null;
 	} catch {
 		return null;
 	}
