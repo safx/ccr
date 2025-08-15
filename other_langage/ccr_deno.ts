@@ -504,22 +504,44 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 	const blockEndTime = new Date(activeBlock.start.getTime() + fiveHoursInMs);
 	const remaining = Math.round((blockEndTime.getTime() - now.getTime()) / (1000 * 60));
 	
-	// Calculate burn rate
-	const elapsedMinutes = (now.getTime() - activeBlock.start.getTime()) / (1000 * 60);
+	// Calculate burn rate (based on actual activity duration, not block duration)
 	let burnRateInfo = "";
 	
-	if (elapsedMinutes > 5) {
-		const costPerHour = (totalCost / elapsedMinutes) * 60;
-		const costPerHourStr = `${formatCurrency(costPerHour)}/hr`;
+	if (activeBlock.entries.length > 0) {
+		const firstEntry = activeBlock.entries[0];
+		const lastEntry = activeBlock.entries[activeBlock.entries.length - 1];
 		
-		// Simple burn rate coloring based on cost
-		const coloredBurnRate = costPerHour < 200.0
-			? green(costPerHourStr)
-			: costPerHour < 400.0
-				? yellow(costPerHourStr)
-				: red(costPerHourStr);
-		
-		burnRateInfo = `${coloredBurnRate}`;
+		if (firstEntry?.timestamp && lastEntry?.timestamp) {
+			const firstEntryTime = new Date(firstEntry.timestamp);
+			const lastEntryTime = new Date(lastEntry.timestamp);
+			const durationMinutes = (lastEntryTime.getTime() - firstEntryTime.getTime()) / (1000 * 60);
+			
+			// Only show burn rate if there's meaningful duration
+			if (durationMinutes > 0) {
+				const costPerHour = (totalCost / durationMinutes) * 60;
+				const costPerHourStr = `${formatCurrency(costPerHour)}/hr`;
+				
+				// Calculate non-cache tokens for burn rate indicator
+				let nonCacheTokens = 0;
+				for (const entry of activeBlock.entries) {
+					if (entry.message?.usage) {
+						nonCacheTokens += (entry.message.usage.input_tokens || 0) + (entry.message.usage.output_tokens || 0);
+					} else if (entry.inputTokens || entry.outputTokens) {
+						nonCacheTokens += (entry.inputTokens || 0) + (entry.outputTokens || 0);
+					}
+				}
+				const tokensPerMinuteForIndicator = nonCacheTokens / durationMinutes;
+				
+				// Burn rate coloring based on tokens per minute (matching ccusage logic)
+				const coloredBurnRate = tokensPerMinuteForIndicator < 2000
+					? green(costPerHourStr)  // Normal
+					: tokensPerMinuteForIndicator < 5000
+						? yellow(costPerHourStr)  // Moderate
+						: red(costPerHourStr);  // High
+				
+				burnRateInfo = `${coloredBurnRate}`;
+			}
+		}
 	}
 	
 	const blockInfo = `${formatCurrency(totalCost)} block`;
