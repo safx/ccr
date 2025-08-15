@@ -19,6 +19,7 @@ mockall = "0.13"
 
 [profile.release]
 opt-level = 3           # Maximum optimization
+debug = false
 lto = "fat"            # Enable Link Time Optimization for better performance
 codegen-units = 1      # Single codegen unit for better optimization
 panic = "abort"        # Smaller binary, slightly faster

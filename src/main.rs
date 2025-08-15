@@ -69,7 +69,6 @@ static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::
 struct StatuslineHookJson {
     session_id: String,
     cwd: String,
-    #[allow(dead_code)]
     transcript_path: String,
     model: Model,
 }
@@ -80,6 +79,34 @@ struct Model {
     #[allow(dead_code)]
     id: Option<String>,
     display_name: String,
+}
+
+// Transcript message structure for parsing JSONL
+#[derive(Debug, Deserialize)]
+struct TranscriptMessage {
+    #[serde(rename = "type")]
+    message_type: String,
+    #[serde(default)]
+    message: Option<TranscriptMessageContent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptMessageContent {
+    #[serde(default)]
+    usage: Option<TranscriptUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptUsage {
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    output_tokens: Option<u64>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
 }
 
 // Get Claude paths
@@ -134,6 +161,24 @@ fn format_currency(value: f64) -> String {
     format!("${:.2}", value)
 }
 
+// Format number with thousands separator
+fn format_number_with_commas(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let mut count = 0;
+
+    for c in s.chars().rev() {
+        if count == 3 {
+            result.push(',');
+            count = 0;
+        }
+        result.push(c);
+        count += 1;
+    }
+
+    result.chars().rev().collect()
+}
+
 // Format remaining time
 fn format_remaining_time(minutes: u64) -> String {
     if minutes == 0 {
@@ -149,6 +194,61 @@ fn format_remaining_time(minutes: u64) -> String {
             format!("{}h left", hours)
         }
     }
+}
+
+// Calculate context tokens from JSONL transcript
+async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
+    // Try to read the file
+    let content = match async_fs::read_to_string(transcript_path).await {
+        Ok(content) => content,
+        Err(_) => return None,
+    };
+
+    // Parse JSONL lines from last to first (most recent usage info)
+    let lines: Vec<&str> = content.lines().rev().collect();
+
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Try to parse as TranscriptMessage
+        if let Ok(msg) = serde_json::from_str::<TranscriptMessage>(trimmed) {
+            // Check if this is an assistant message with usage info
+            if msg.message_type == "assistant"
+                && let Some(message) = msg.message
+                && let Some(usage) = message.usage
+                && let Some(input_tokens) = usage.input_tokens
+            {
+                // Calculate total input tokens including cache
+                let total_input = input_tokens
+                    + usage.cache_creation_input_tokens.unwrap_or(0)
+                    + usage.cache_read_input_tokens.unwrap_or(0);
+
+                // Calculate percentage (capped at 100% for display)
+                let max_tokens = 200_000;
+                let percentage = ((total_input as usize * 100) / max_tokens).min(9999);
+
+                let percentage_str = format!("{}%", percentage);
+                let percentage_str = if percentage < 50 {
+                    percentage_str.green()
+                } else if percentage < 80 {
+                    percentage_str.yellow()
+                } else {
+                    percentage_str.red()
+                };
+
+                // Format with thousands separator
+                let formatted = format_number_with_commas(total_input as usize);
+
+                return Some(format!("{} ({})", formatted, percentage_str));
+            }
+        }
+    }
+
+    // No valid usage information found
+    None
 }
 
 #[tokio::main]
@@ -175,10 +275,11 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Load usage snapshot
-    let (usage_snapshot, git_branch) = tokio::join!(
+    // Load usage snapshot and context info
+    let (usage_snapshot, git_branch, context_info) = tokio::join!(
         load_all_data(&claude_paths, &hook_data.session_id),
-        get_git_branch(Path::new(&hook_data.cwd))
+        get_git_branch(Path::new(&hook_data.cwd)),
+        calculate_context_tokens(Path::new(&hook_data.transcript_path))
     );
 
     let usage_snapshot = usage_snapshot?;
@@ -244,17 +345,24 @@ async fn main() -> Result<()> {
         ("No active block".to_string(), String::new(), String::new())
     };
 
+    let context_display = if let Some(ctx) = context_info {
+        format!(" ⚖️ {}", ctx)
+    } else {
+        String::new()
+    };
+
     // Build and print status line
     print!("\x1b[0m"); // Reset color
     print!("{}{} 👤 {}", current_dir, branch_display, colored_model);
     print!("\x1b[0m"); // Reset after model name
     print!(
-        "{} 💰 {} today, {} session, {}{}",
+        "{} 💰 {} today, {} session, {}{}{}",
         remaining_display,
         format_currency(today_cost),
         session_display,
         block_display,
-        burn_rate_display
+        burn_rate_display,
+        context_display
     );
     println!();
 
