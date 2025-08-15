@@ -1,17 +1,7 @@
-use crate::{ModelPricing, TokenUsage, UsageEntry, calculate_cost};
+use crate::pricing::calculate_cost;
+use crate::types::{ModelPricing, SessionBlock, TokenUsage, UsageEntry};
 use chrono::{DateTime, Duration, Timelike, Utc};
 use std::collections::HashSet;
-
-/// Session block representing a billing period
-#[derive(Debug, Clone)]
-pub struct SessionBlock {
-    pub start_time: DateTime<Utc>,
-    pub end_time: DateTime<Utc>,
-    pub is_active: bool,
-    pub cost_usd: f64,
-    pub entries: Vec<UsageEntry>,
-    pub is_gap: bool,
-}
 
 /// Floor timestamp to the hour (e.g., 14:37:22 → 14:00:00)
 pub fn floor_to_hour(timestamp: DateTime<Utc>) -> DateTime<Utc> {

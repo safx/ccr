@@ -7,16 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::task;
 
-use crate::{ModelPricing, TokenUsage, UsageEntry, calculate_cost};
-
-/// Snapshot of usage data at a point in time
-#[derive(Debug, Clone)]
-pub struct UsageSnapshot {
-    pub all_entries: Vec<UsageEntry>,
-    pub by_session: HashMap<String, Vec<UsageEntry>>,
-    pub today_entries: Vec<UsageEntry>,
-    pub processed_hashes: HashSet<String>,
-}
+use crate::pricing::calculate_cost;
+use crate::types::{ModelPricing, TokenUsage, UsageEntry, UsageSnapshot};
 
 /// Load all data with optimized parallelism
 pub async fn load_all_data(

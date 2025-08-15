@@ -1,111 +1,26 @@
-// TDD: Start with failing test for ModelPricing
-
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-
+// Module declarations
+pub mod formatting;
 pub mod loader;
+pub mod pricing;
 pub mod session_blocks;
+pub mod types;
+pub mod utils;
 
-// Green phase: Minimal implementation to pass the test
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelPricing {
-    pub input_cost_per_token: Option<f64>,
-    pub output_cost_per_token: Option<f64>,
-    pub cache_creation_input_token_cost: Option<f64>,
-    pub cache_read_input_token_cost: Option<f64>,
-}
-
-// Green phase: TokenUsage struct for calculate_cost
-#[derive(Debug, Clone)]
-pub struct TokenUsage {
-    pub input_tokens: Option<u32>,
-    pub output_tokens: Option<u32>,
-    pub cache_creation_tokens: Option<u32>,
-    pub cache_read_tokens: Option<u32>,
-}
-
-// Green phase: calculate_cost function
-pub fn calculate_cost(tokens: &TokenUsage, pricing: &ModelPricing) -> f64 {
-    let mut cost = 0.0;
-
-    if let (Some(input), Some(price)) = (tokens.input_tokens, pricing.input_cost_per_token) {
-        cost += input as f64 * price;
-    }
-    if let (Some(output), Some(price)) = (tokens.output_tokens, pricing.output_cost_per_token) {
-        cost += output as f64 * price;
-    }
-    if let (Some(cache_creation), Some(price)) = (
-        tokens.cache_creation_tokens,
-        pricing.cache_creation_input_token_cost,
-    ) {
-        cost += cache_creation as f64 * price;
-    }
-    if let (Some(cache_read), Some(price)) = (
-        tokens.cache_read_tokens,
-        pricing.cache_read_input_token_cost,
-    ) {
-        cost += cache_read as f64 * price;
-    }
-
-    cost
-}
-
-// Green phase: UsageEntry struct for JSON parsing
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageEntry {
-    pub timestamp: Option<String>,
-    pub model: Option<String>,
-    #[serde(rename = "costUSD")]
-    pub cost_usd: Option<f64>,
-    pub message: Option<Message>,
-    #[serde(rename = "requestId")]
-    pub request_id: Option<String>,
-    // Additional fields for session blocks
-    #[serde(skip)]
-    pub message_id: Option<String>,
-    #[serde(skip)]
-    pub message_model: Option<String>,
-    #[serde(skip)]
-    pub message_usage: Option<Usage>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Message {
-    pub id: Option<String>,
-    pub model: Option<String>,
-    pub usage: Option<Usage>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Usage {
-    pub input_tokens: Option<u32>,
-    pub output_tokens: Option<u32>,
-    pub cache_creation_input_tokens: Option<u32>,
-    pub cache_read_input_tokens: Option<u32>,
-}
-
-// Green phase: Duplicate detection function
-pub fn is_duplicate(entry: &UsageEntry, processed_hashes: &mut HashSet<String>) -> bool {
-    if let (Some(message), Some(request_id)) = (&entry.message, &entry.request_id)
-        && let Some(message_id) = &message.id
-    {
-        let unique_hash = format!("{}:{}", message_id, request_id);
-        if processed_hashes.contains(&unique_hash) {
-            return true;
-        }
-        processed_hashes.insert(unique_hash);
-    }
-    false
-}
+// Re-export commonly used items for backward compatibility
+pub use pricing::{MODEL_PRICING, calculate_cost};
+pub use types::{
+    Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage, Usage, UsageEntry,
+    UsageSnapshot,
+};
+pub use utils::is_duplicate;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn test_model_pricing_fields() {
-        // Red phase: Test will fail because ModelPricing doesn't exist yet
         let pricing = ModelPricing {
             input_cost_per_token: Some(0.000015),
             output_cost_per_token: Some(0.000075),
@@ -119,7 +34,6 @@ mod tests {
 
     #[test]
     fn test_usage_entry_json_parsing() {
-        // Red phase: Test for UsageEntry JSON deserialization
         let json_str = r#"{
             "timestamp": "2024-01-15T10:30:00Z",
             "model": "claude-opus-4-1-20250805",
@@ -156,7 +70,6 @@ mod tests {
 
     #[test]
     fn test_calculate_cost() {
-        // Red phase: Test for calculate_cost function
         let pricing = ModelPricing {
             input_cost_per_token: Some(0.000015),
             output_cost_per_token: Some(0.000075),
@@ -192,9 +105,6 @@ mod tests {
 
     #[test]
     fn test_duplicate_detection() {
-        // Red phase: Test for duplicate detection
-        use std::collections::HashSet;
-
         let mut processed_hashes = HashSet::new();
 
         // First entry
