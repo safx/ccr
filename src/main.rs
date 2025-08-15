@@ -307,16 +307,14 @@ async fn load_today_usage_data() -> Result<f64> {
     let claude_paths = get_claude_paths();
     let today = Utc::now().format("%Y-%m-%d").to_string();
     
-    // Process paths in parallel
+    // Process paths in parallel to collect entries
     let tasks: Vec<_> = claude_paths.into_iter().map(|base_path| {
         let today = today.clone();  // Simple clone of 10-char string
-        task::spawn_blocking(move || -> Result<f64> {
+        task::spawn_blocking(move || -> Result<Vec<UsageEntry>> {
             let projects_path = base_path.join("projects");
             if !projects_path.exists() {
-                return Ok(0.0);
+                return Ok(Vec::new());
             }
-            
-            let mut total_cost = 0.0;
             
             // Collect all JSONL files first
             let mut jsonl_files = Vec::new();
@@ -335,34 +333,51 @@ async fn load_today_usage_data() -> Result<f64> {
                 }
             }
             
-            // Process files in parallel using rayon
-            let file_results: Vec<_> = jsonl_files.par_iter().map(|path| {
-                let mut local_hashes = HashSet::with_capacity(100);
-                process_jsonl_file(
-                    path,
-                    |entry| {
-                        if let Some(timestamp) = &entry.timestamp {
-                            if timestamp.starts_with(&today) {
-                                return Some(calculate_entry_cost(entry));
+            // Process files in parallel to collect today's entries
+            let entries: Vec<UsageEntry> = jsonl_files.par_iter()
+                .flat_map(|path| {
+                    let file = fs::File::open(path).ok()?;
+                    let reader = BufReader::with_capacity(128 * 1024, file);
+                    
+                    let mut entries = Vec::new();
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            if line.trim().is_empty() {
+                                continue;
+                            }
+                            
+                            if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) {
+                                if let Some(timestamp) = &entry.timestamp {
+                                    if timestamp.starts_with(&today) {
+                                        entries.push(entry);
+                                    }
+                                }
                             }
                         }
-                        None
-                    },
-                    &mut local_hashes,
-                )
-            }).collect();
+                    }
+                    Some(entries)
+                })
+                .flatten()
+                .collect();
             
-            for result in file_results {
-                total_cost += result?;
-            }
-            
-            Ok(total_cost)
+            Ok(entries)
         })
     }).collect();
     
-    let mut total = 0.0;
+    // Collect all entries from all paths
+    let mut all_entries = Vec::new();
     for task in tasks {
-        total += task.await??;
+        all_entries.extend(task.await??);
+    }
+    
+    // Now do deduplication and calculate cost
+    let mut processed_hashes = HashSet::with_capacity(all_entries.len());
+    let mut total = 0.0;
+    
+    for entry in all_entries {
+        if !is_duplicate_fast(&entry, &mut processed_hashes) {
+            total += calculate_entry_cost(&entry);
+        }
     }
     
     Ok(total)
