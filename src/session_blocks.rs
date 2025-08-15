@@ -1,6 +1,6 @@
-use chrono::{DateTime, Duration, Utc, Timelike};
+use crate::{ModelPricing, TokenUsage, UsageEntry, calculate_cost};
+use chrono::{DateTime, Duration, Timelike, Utc};
 use std::collections::HashSet;
-use crate::{UsageEntry, ModelPricing, calculate_cost, TokenUsage};
 
 /// Session block representing a billing period
 #[derive(Debug, Clone)]
@@ -16,9 +16,12 @@ pub struct SessionBlock {
 /// Floor timestamp to the hour (e.g., 14:37:22 → 14:00:00)
 pub fn floor_to_hour(timestamp: DateTime<Utc>) -> DateTime<Utc> {
     timestamp
-        .with_minute(0).unwrap()
-        .with_second(0).unwrap()
-        .with_nanosecond(0).unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap()
+        .with_nanosecond(0)
+        .unwrap()
 }
 
 /// Identify session blocks from sorted entries
@@ -30,57 +33,63 @@ pub fn identify_session_blocks(
     if entries.is_empty() {
         return Vec::new();
     }
-    
+
     let now = Utc::now();
     let five_hours = Duration::hours(5);
     let mut blocks = Vec::new();
     let mut processed_hashes = HashSet::new();
-    
+
     // Sort entries by timestamp
     let mut sorted_entries = entries;
     sorted_entries.sort_by(|a, b| {
-        let time_a = a.timestamp.as_ref()
+        let time_a = a
+            .timestamp
+            .as_ref()
             .and_then(|t| t.parse::<DateTime<Utc>>().ok())
             .unwrap_or(DateTime::<Utc>::MIN_UTC);
-        let time_b = b.timestamp.as_ref()
+        let time_b = b
+            .timestamp
+            .as_ref()
             .and_then(|t| t.parse::<DateTime<Utc>>().ok())
             .unwrap_or(DateTime::<Utc>::MIN_UTC);
         time_a.cmp(&time_b)
     });
-    
+
     let mut current_block_start: Option<DateTime<Utc>> = None;
     let mut current_block_entries: Vec<UsageEntry> = Vec::new();
     let mut current_block_cost = 0.0;
     let mut last_entry_time: Option<DateTime<Utc>> = None;
-    
+
     for entry in sorted_entries {
         // Parse timestamp
-        let entry_time = match entry.timestamp.as_ref()
-            .and_then(|t| t.parse::<DateTime<Utc>>().ok()) {
+        let entry_time = match entry
+            .timestamp
+            .as_ref()
+            .and_then(|t| t.parse::<DateTime<Utc>>().ok())
+        {
             Some(t) => t,
             None => continue,
         };
-        
+
         // Check for duplicate (only when BOTH IDs exist)
-        if let Some(message) = &entry.message {
-            if let (Some(msg_id), Some(req_id)) = (&message.id, &entry.request_id) {
-                let hash = format!("{}:{}", msg_id, req_id);
-                if processed_hashes.contains(&hash) {
-                    continue;
-                }
-                processed_hashes.insert(hash);
+        if let Some(message) = &entry.message
+            && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.request_id)
+        {
+            let hash = format!("{}:{}", msg_id, req_id);
+            if processed_hashes.contains(&hash) {
+                continue;
             }
+            processed_hashes.insert(hash);
         }
         // If either ID is missing, keep the entry (no deduplication)
-        
+
         // Calculate entry cost (prefer costUSD, fallback to calculating from tokens)
         let entry_cost = if let Some(cost) = entry.cost_usd {
             cost
         } else if let Some(message) = &entry.message {
             if let Some(usage) = &message.usage {
-                let model_name = message.model.as_deref()
-                    .or(entry.model.as_deref());
-                
+                let model_name = message.model.as_deref().or(entry.model.as_deref());
+
                 if let Some(model_name) = model_name {
                     if let Some(pricing) = get_model_pricing(model_name, pricing_map) {
                         calculate_cost(
@@ -104,7 +113,7 @@ pub fn identify_session_blocks(
         } else {
             0.0
         };
-        
+
         if current_block_start.is_none() {
             // Start first block
             current_block_start = Some(floor_to_hour(entry_time));
@@ -119,15 +128,15 @@ pub fn identify_session_blocks(
             } else {
                 Duration::zero()
             };
-            
+
             // Check if we need to end the current block
             if time_since_block_start > five_hours || time_since_last_entry > five_hours {
                 // Create and save the current block
                 let block_end = block_start + five_hours;
                 let last_time = last_entry_time.unwrap();
-                let is_active = now.signed_duration_since(last_time) < five_hours 
-                    && now < block_end;
-                
+                let is_active =
+                    now.signed_duration_since(last_time) < five_hours && now < block_end;
+
                 blocks.push(SessionBlock {
                     start_time: block_start,
                     end_time: block_end,
@@ -136,12 +145,12 @@ pub fn identify_session_blocks(
                     entries: current_block_entries.clone(),
                     is_gap: false,
                 });
-                
+
                 // If there's a gap, create a gap block
                 if time_since_last_entry > five_hours {
                     let gap_start = last_time + five_hours;
                     let gap_end = entry_time;
-                    
+
                     blocks.push(SessionBlock {
                         start_time: gap_start,
                         end_time: gap_end,
@@ -151,7 +160,7 @@ pub fn identify_session_blocks(
                         is_gap: true,
                     });
                 }
-                
+
                 // Start new block
                 current_block_start = Some(floor_to_hour(entry_time));
                 current_block_entries = vec![entry];
@@ -161,19 +170,18 @@ pub fn identify_session_blocks(
                 current_block_entries.push(entry);
                 current_block_cost += entry_cost;
             }
-            
+
             last_entry_time = Some(entry_time);
         }
     }
-    
+
     // Create the final block if there are remaining entries
     if !current_block_entries.is_empty() {
         let block_start = current_block_start.unwrap();
         let block_end = block_start + five_hours;
         let last_time = last_entry_time.unwrap();
-        let is_active = now.signed_duration_since(last_time) < five_hours 
-            && now < block_end;
-        
+        let is_active = now.signed_duration_since(last_time) < five_hours && now < block_end;
+
         blocks.push(SessionBlock {
             start_time: block_start,
             end_time: block_end,
@@ -183,7 +191,7 @@ pub fn identify_session_blocks(
             is_gap: false,
         });
     }
-    
+
     blocks
 }
 
@@ -197,24 +205,28 @@ pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
     if block.is_gap || block.entries.is_empty() {
         return None;
     }
-    
+
     // Get first and last entry timestamps
     let first_entry = block.entries.first()?;
     let last_entry = block.entries.last()?;
-    
-    let first_time = first_entry.timestamp.as_ref()
+
+    let first_time = first_entry
+        .timestamp
+        .as_ref()
         .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
-    let last_time = last_entry.timestamp.as_ref()
+    let last_time = last_entry
+        .timestamp
+        .as_ref()
         .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
-    
+
     // Calculate duration from first to last entry (not from block start)
     let duration_minutes = last_time.signed_duration_since(first_time).num_minutes() as f64;
-    
+
     // Skip if duration is 0 or negative
     if duration_minutes <= 0.0 {
         return None;
     }
-    
+
     // Calculate cost per hour
     Some((block.cost_usd / duration_minutes) * 60.0)
 }
@@ -228,14 +240,14 @@ fn get_model_pricing<'a>(
     if let Some(pricing) = pricing_map.get(model_name) {
         return Some(pricing);
     }
-    
+
     // Partial match
     for (key, pricing) in pricing_map {
-        if model_name.contains(key) || key.contains(&model_name) {
+        if model_name.contains(key) || key.contains(model_name) {
             return Some(pricing);
         }
     }
-    
+
     // Fallback based on model type
     if model_name.to_lowercase().contains("opus") {
         pricing_map.get("claude-opus-4-1-20250805")
@@ -250,57 +262,58 @@ fn get_model_pricing<'a>(
 pub async fn load_all_entries(
     claude_paths: &[std::path::PathBuf],
 ) -> Result<Vec<UsageEntry>, Box<dyn std::error::Error + Send + Sync>> {
-    use tokio::task;
     use std::fs;
     use std::io::{BufRead, BufReader};
-    
+    use tokio::task;
+
     let mut all_entries = Vec::new();
-    
+
     for base_path in claude_paths {
         let projects_path = base_path.join("projects");
         if !projects_path.exists() {
             continue;
         }
-        
+
         let base_path = base_path.clone();
-        let entries = task::spawn_blocking(move || -> Result<Vec<UsageEntry>, Box<dyn std::error::Error + Send + Sync>> {
-            let mut entries = Vec::new();
-            let projects_path = base_path.join("projects");
-            
-            for project_entry in fs::read_dir(&projects_path)? {
-                let project_entry = project_entry?;
-                if !project_entry.file_type()?.is_dir() {
-                    continue;
-                }
-                
-                for file_entry in fs::read_dir(project_entry.path())? {
-                    let file_entry = file_entry?;
-                    if !file_entry.file_name().to_string_lossy().ends_with(".jsonl") {
+        let entries = task::spawn_blocking(
+            move || -> Result<Vec<UsageEntry>, Box<dyn std::error::Error + Send + Sync>> {
+                let mut entries = Vec::new();
+                let projects_path = base_path.join("projects");
+
+                for project_entry in fs::read_dir(&projects_path)? {
+                    let project_entry = project_entry?;
+                    if !project_entry.file_type()?.is_dir() {
                         continue;
                     }
-                    
-                    let file = fs::File::open(file_entry.path())?;
-                    let reader = BufReader::with_capacity(128 * 1024, file);
-                    
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
+
+                    for file_entry in fs::read_dir(project_entry.path())? {
+                        let file_entry = file_entry?;
+                        if !file_entry.file_name().to_string_lossy().ends_with(".jsonl") {
+                            continue;
+                        }
+
+                        let file = fs::File::open(file_entry.path())?;
+                        let reader = BufReader::with_capacity(128 * 1024, file);
+
+                        for line in reader.lines().flatten() {
                             if line.trim().is_empty() {
                                 continue;
                             }
-                            
+
                             if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) {
                                 entries.push(entry);
                             }
                         }
                     }
                 }
-            }
-            
-            Ok(entries)
-        }).await??;
-        
+
+                Ok(entries)
+            },
+        )
+        .await??;
+
         all_entries.extend(entries);
     }
-    
+
     Ok(all_entries)
 }
