@@ -210,30 +210,49 @@ fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
     0.0
 }
 
-// Process JSONL file efficiently
+// Process JSONL file efficiently with parallel line processing
 fn process_jsonl_file(
     path: &Path,
-    processor: impl Fn(&UsageEntry) -> Option<f64>,
+    processor: impl Fn(&UsageEntry) -> Option<f64> + Sync,
     processed_hashes: &mut HashSet<u64>,
 ) -> Result<f64> {
-    let file = fs::File::open(path)?;
-    let reader = BufReader::with_capacity(64 * 1024, file); // 64KB buffer
-    let mut total = 0.0;
+    use std::sync::{Arc, Mutex};
     
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        
-        if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) {
-            if !is_duplicate_fast(&entry, processed_hashes) {
-                if let Some(cost) = processor(&entry) {
-                    total += cost;
+    let file = fs::File::open(path)?;
+    let reader = BufReader::with_capacity(128 * 1024, file); // Increased to 128KB buffer
+    
+    // Read all lines into memory for parallel processing
+    let lines: Vec<String> = reader.lines()
+        .filter_map(|line| line.ok())
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    
+    // Use a mutex for the hash set to avoid duplicates
+    let hashes_mutex = Arc::new(Mutex::new(std::mem::take(processed_hashes)));
+    
+    // Process lines in parallel using rayon
+    let total: f64 = lines.par_iter()
+        .with_min_len(10) // Process at least 10 lines per task for better efficiency
+        .filter_map(|line| {
+            if let Ok(entry) = serde_json::from_str::<UsageEntry>(line) {
+                let mut hashes = hashes_mutex.lock().unwrap();
+                if !is_duplicate_fast(&entry, &mut *hashes) {
+                    drop(hashes); // Release lock early
+                    processor(&entry)
+                } else {
+                    None
                 }
+            } else {
+                None
             }
-        }
-    }
+        })
+        .sum();
+    
+    // Update the original hash set
+    *processed_hashes = Arc::try_unwrap(hashes_mutex)
+        .unwrap_or_else(|_| panic!("Failed to unwrap Arc"))
+        .into_inner()
+        .unwrap();
     
     Ok(total)
 }
@@ -392,41 +411,83 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
                 }
             }
             
-            // Process files
-            for path in jsonl_files {
-                let file = fs::File::open(&path)?;
-                let reader = BufReader::with_capacity(64 * 1024, file);
-                
-                for line in reader.lines() {
-                    let line = line?;
-                    if line.trim().is_empty() {
-                        continue;
-                    }
+            // Process all files in parallel with line-level parallelism
+            use std::sync::{Arc, Mutex};
+            
+            let shared_state = Arc::new(Mutex::new((
+                block_start_time,
+                latest_entry_time,
+                total_cost,
+                recent_entries,
+                processed_hashes,
+            )));
+            
+            // Process files in parallel, with each file processing lines in parallel
+            let results: Vec<_> = jsonl_files.par_iter()
+                .map(|path| {
+                    let file = fs::File::open(path)?;
+                    let reader = BufReader::with_capacity(128 * 1024, file);
                     
-                    if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) {
-                        if let Some(timestamp_str) = &entry.timestamp {
-                            if let Ok(entry_time) = timestamp_str.parse::<DateTime<Utc>>() {
-                                let time_since = now.signed_duration_since(entry_time);
-                                
-                                if time_since <= five_hours {
-                                    if !is_duplicate_fast(&entry, &mut processed_hashes) {
-                                        if block_start_time.is_none() || entry_time < block_start_time.unwrap() {
-                                            block_start_time = Some(entry_time);
+                    // Collect lines for this file
+                    let lines: Vec<String> = reader.lines()
+                        .filter_map(|line| line.ok())
+                        .filter(|line| !line.trim().is_empty())
+                        .collect();
+                    
+                    // Process lines in parallel
+                    let file_entries: Vec<_> = lines.par_iter()
+                        .with_min_len(5) // Smaller chunks for better work stealing
+                        .filter_map(|line| {
+                            if let Ok(entry) = serde_json::from_str::<UsageEntry>(line) {
+                                if let Some(timestamp_str) = &entry.timestamp {
+                                    if let Ok(entry_time) = timestamp_str.parse::<DateTime<Utc>>() {
+                                        let time_since = now.signed_duration_since(entry_time);
+                                        if time_since <= five_hours {
+                                            return Some((entry, entry_time));
                                         }
-                                        if latest_entry_time.is_none() || entry_time > latest_entry_time.unwrap() {
-                                            latest_entry_time = Some(entry_time);
-                                        }
-                                        
-                                        let cost = calculate_entry_cost(&entry);
-                                        total_cost += cost;
-                                        recent_entries.push(entry);
                                     }
                                 }
                             }
+                            None
+                        })
+                        .collect();
+                    
+                    Ok::<Vec<_>, Box<dyn Error + Send + Sync>>(file_entries)
+                })
+                .collect();
+            
+            // Merge results from all files
+            for result in results {
+                if let Ok(file_entries) = result {
+                    for (entry, entry_time) in file_entries {
+                        let mut state = shared_state.lock().unwrap();
+                        let (block_start, latest, cost, entries, hashes) = &mut *state;
+                        
+                        if !is_duplicate_fast(&entry, hashes) {
+                            if block_start.is_none() || entry_time < block_start.unwrap() {
+                                *block_start = Some(entry_time);
+                            }
+                            if latest.is_none() || entry_time > latest.unwrap() {
+                                *latest = Some(entry_time);
+                            }
+                            
+                            *cost += calculate_entry_cost(&entry);
+                            entries.push(entry);
                         }
                     }
                 }
             }
+            
+            let state = Arc::try_unwrap(shared_state)
+                .unwrap_or_else(|_| panic!("Failed to unwrap Arc"))
+                .into_inner()
+                .unwrap();
+            
+            block_start_time = state.0;
+            latest_entry_time = state.1;
+            total_cost = state.2;
+            recent_entries = state.3;
+            processed_hashes = state.4;
             
             if recent_entries.is_empty() || latest_entry_time.is_none() {
                 return Ok(None);
@@ -532,6 +593,13 @@ async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Configure rayon thread pool for optimal performance
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .thread_name(|i| format!("ccr-worker-{}", i))
+        .build_global()
+        .unwrap_or_else(|e| eprintln!("Failed to configure thread pool: {}", e));
+    
     // Force colored output even when not in a TTY
     colored::control::set_override(true);
     
