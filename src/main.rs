@@ -372,6 +372,7 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
             
             let mut recent_entries = Vec::with_capacity(1000);
             let mut block_start_time: Option<DateTime<Utc>> = None;
+            let mut latest_entry_time: Option<DateTime<Utc>> = None;
             let mut total_cost = 0.0;
             let mut processed_hashes: HashSet<u64> = HashSet::with_capacity(5000);
             
@@ -412,6 +413,9 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
                                         if block_start_time.is_none() || entry_time < block_start_time.unwrap() {
                                             block_start_time = Some(entry_time);
                                         }
+                                        if latest_entry_time.is_none() || entry_time > latest_entry_time.unwrap() {
+                                            latest_entry_time = Some(entry_time);
+                                        }
                                         
                                         let cost = calculate_entry_cost(&entry);
                                         total_cost += cost;
@@ -424,15 +428,17 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
                 }
             }
             
-            if recent_entries.is_empty() || block_start_time.is_none() {
+            if recent_entries.is_empty() || latest_entry_time.is_none() {
                 return Ok(None);
             }
             
-            // Calculate block info
-            let block_start = floor_to_hour(block_start_time.unwrap());
+            // Calculate block info based on the latest entry
+            let latest_time = latest_entry_time.unwrap();
+            let block_start = floor_to_hour(latest_time);
             let block_end = block_start + five_hours;
             let remaining = block_end.signed_duration_since(now);
             let remaining_minutes = remaining.num_minutes().max(0) as u64;
+            
             
             let elapsed_minutes = now.signed_duration_since(block_start).num_minutes() as f64;
             let burn_rate = if elapsed_minutes > 5.0 {
@@ -595,7 +601,7 @@ async fn main() -> Result<()> {
         };
         
         let remaining = if block.remaining_minutes > 0 {
-            format!(" ⏰ {} ", format_remaining_time(block.remaining_minutes).magenta())
+            format!(" ⏰ {}", format_remaining_time(block.remaining_minutes).magenta())
         } else {
             String::new()
         };
@@ -615,7 +621,7 @@ async fn main() -> Result<()> {
     print!("\x1b[0m"); // Reset color
     print!("{}{} 👤 {}", current_dir, branch_display, colored_model);
     print!("\x1b[0m"); // Reset after model name
-    print!("{}💰 {} today, {} session, {}{}{}", 
+    print!("{} 💰 {} today, {} session, {}{}{}", 
         remaining_display,
         format_currency(today_cost), 
         session_display,
