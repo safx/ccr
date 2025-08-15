@@ -295,7 +295,7 @@ pub async fn load_all_entries(
                         let file = fs::File::open(file_entry.path())?;
                         let reader = BufReader::with_capacity(128 * 1024, file);
 
-                        for line in reader.lines().flatten() {
+                        for line in reader.lines().map_while(Result::ok) {
                             if line.trim().is_empty() {
                                 continue;
                             }

@@ -105,6 +105,7 @@ struct TranscriptUsage {
     #[serde(default)]
     input_tokens: Option<u64>,
     #[serde(default)]
+    #[allow(dead_code)]
     output_tokens: Option<u64>,
     #[serde(default)]
     cache_creation_input_tokens: Option<u64>,
@@ -209,6 +210,7 @@ fn format_remaining_time(remaining_minutes: u64) -> String {
 
 // Floor timestamp to hour
 #[inline]
+#[allow(dead_code)]
 fn floor_to_hour(dt: DateTime<Utc>) -> DateTime<Utc> {
     dt.date_naive()
         .and_hms_opt(dt.hour(), 0, 0)
@@ -281,7 +283,7 @@ fn process_jsonl_file(
     // Read all lines into memory for parallel processing
     let lines: Vec<String> = reader
         .lines()
-        .filter_map(|line| line.ok())
+        .map_while(|line| line.ok())
         .filter(|line| !line.trim().is_empty())
         .collect();
 
@@ -405,7 +407,7 @@ async fn load_today_usage_data() -> Result<f64> {
                         let reader = BufReader::with_capacity(128 * 1024, file);
 
                         let mut entries = Vec::new();
-                        for line in reader.lines().flatten() {
+                        for line in reader.lines().map_while(|line| line.ok()) {
                             if line.trim().is_empty() {
                                 continue;
                             }
@@ -483,172 +485,6 @@ async fn load_active_block() -> Result<Option<BlockInfo>> {
     }
 
     Ok(None)
-}
-
-// Load active block - old implementation (keeping for comparison)
-async fn load_active_block_old() -> Result<Option<BlockInfo>> {
-    let claude_paths = get_claude_paths();
-    let now = Utc::now();
-    let five_hours = chrono::Duration::hours(5);
-
-    // Process paths in parallel
-    let tasks: Vec<_> = claude_paths
-        .into_iter()
-        .map(|base_path| {
-            task::spawn_blocking(move || -> Result<Option<BlockInfo>> {
-                let projects_path = base_path.join("projects");
-                if !projects_path.exists() {
-                    return Ok(None);
-                }
-
-                let mut recent_entries = Vec::with_capacity(1000);
-                let mut block_start_time: Option<DateTime<Utc>> = None;
-                let mut latest_entry_time: Option<DateTime<Utc>> = None;
-                let mut total_cost = 0.0;
-                let mut processed_hashes: HashSet<u64> = HashSet::with_capacity(5000);
-
-                // Collect all JSONL files
-                let mut jsonl_files = Vec::new();
-                for project_entry in fs::read_dir(&projects_path)? {
-                    let project_entry = project_entry?;
-                    if !project_entry.file_type()?.is_dir() {
-                        continue;
-                    }
-
-                    for file_entry in fs::read_dir(project_entry.path())? {
-                        let file_entry = file_entry?;
-                        if file_entry.file_name().to_string_lossy().ends_with(".jsonl") {
-                            jsonl_files.push(file_entry.path());
-                        }
-                    }
-                }
-
-                // Process all files in parallel with line-level parallelism
-                use std::sync::{Arc, Mutex};
-
-                let shared_state = Arc::new(Mutex::new((
-                    block_start_time,
-                    latest_entry_time,
-                    total_cost,
-                    recent_entries,
-                    processed_hashes,
-                )));
-
-                // Process files in parallel, with each file processing lines in parallel
-                let results: Vec<_> = jsonl_files
-                    .par_iter()
-                    .map(|path| {
-                        let file = fs::File::open(path)?;
-                        let reader = BufReader::with_capacity(128 * 1024, file);
-
-                        // Collect lines for this file
-                        let lines: Vec<String> = reader
-                            .lines()
-                            .filter_map(|line| line.ok())
-                            .filter(|line| !line.trim().is_empty())
-                            .collect();
-
-                        // Process lines in parallel
-                        let file_entries: Vec<_> = lines
-                            .par_iter()
-                            .with_min_len(5) // Smaller chunks for better work stealing
-                            .filter_map(|line| {
-                                if let Ok(entry) = serde_json::from_str::<UsageEntry>(line)
-                                    && let Some(timestamp_str) = &entry.timestamp
-                                    && let Ok(entry_time) = timestamp_str.parse::<DateTime<Utc>>()
-                                {
-                                    let time_since = now.signed_duration_since(entry_time);
-                                    if time_since <= five_hours {
-                                        return Some((entry, entry_time));
-                                    }
-                                }
-                                None
-                            })
-                            .collect();
-
-                        Ok::<Vec<_>, Box<dyn Error + Send + Sync>>(file_entries)
-                    })
-                    .collect();
-
-                // Merge results from all files
-                for file_entries in results.into_iter().flatten() {
-                    for (entry, entry_time) in file_entries {
-                        let mut state = shared_state.lock().unwrap();
-                        let (block_start, latest, cost, entries, hashes) = &mut *state;
-
-                        if !is_duplicate_fast(&entry, hashes) {
-                            if block_start.is_none() || entry_time < block_start.unwrap() {
-                                *block_start = Some(entry_time);
-                            }
-                            if latest.is_none() || entry_time > latest.unwrap() {
-                                *latest = Some(entry_time);
-                            }
-
-                            *cost += calculate_entry_cost(&entry);
-                            entries.push(entry);
-                        }
-                    }
-                }
-
-                let state = Arc::try_unwrap(shared_state)
-                    .unwrap_or_else(|_| panic!("Failed to unwrap Arc"))
-                    .into_inner()
-                    .unwrap();
-
-                block_start_time = state.0;
-                latest_entry_time = state.1;
-                total_cost = state.2;
-                recent_entries = state.3;
-                processed_hashes = state.4;
-
-                if recent_entries.is_empty() || latest_entry_time.is_none() {
-                    return Ok(None);
-                }
-
-                // Calculate block info based on the latest entry
-                let latest_time = latest_entry_time.unwrap();
-                let block_start = floor_to_hour(latest_time);
-                let block_end = block_start + five_hours;
-                let remaining = block_end.signed_duration_since(now);
-                let remaining_minutes = remaining.num_minutes().max(0) as u64;
-
-                let elapsed_minutes = now.signed_duration_since(block_start).num_minutes() as f64;
-                let burn_rate = if elapsed_minutes > 5.0 {
-                    Some((total_cost / elapsed_minutes) * 60.0)
-                } else {
-                    None
-                };
-
-                Ok(Some(BlockInfo {
-                    block_cost: total_cost,
-                    burn_rate_per_hour: burn_rate,
-                    remaining_minutes,
-                }))
-            })
-        })
-        .collect();
-
-    // Combine results from all paths
-    let mut final_block: Option<BlockInfo> = None;
-    for task in tasks {
-        if let Some(block) = task.await?? {
-            if let Some(ref mut fb) = final_block {
-                fb.block_cost += block.block_cost;
-                // Keep the earliest remaining time
-                if block.remaining_minutes < fb.remaining_minutes {
-                    fb.remaining_minutes = block.remaining_minutes;
-                }
-                // Recalculate burn rate if needed
-                if let (Some(br1), Some(br2)) = (fb.burn_rate_per_hour, block.burn_rate_per_hour) {
-                    fb.burn_rate_per_hour = Some((br1 + br2) / 2.0);
-                }
-            } else {
-                final_block = Some(block);
-            }
-        }
-    }
-
-    Ok(final_block)
 }
 
 // Get git branch - optimized

@@ -207,6 +207,9 @@ mod tests {
                 usage: None,
             }),
             request_id: Some("req_456".to_string()),
+            message_id: None,
+            message_model: None,
+            message_usage: None,
         };
 
         // Same message and request IDs (duplicate)
@@ -220,6 +223,9 @@ mod tests {
                 usage: None,
             }),
             request_id: Some("req_456".to_string()),
+            message_id: None,
+            message_model: None,
+            message_usage: None,
         };
 
         // Different IDs (not a duplicate)
@@ -233,6 +239,9 @@ mod tests {
                 usage: None,
             }),
             request_id: Some("req_999".to_string()),
+            message_id: None,
+            message_model: None,
+            message_usage: None,
         };
 
         // Test duplicate detection
