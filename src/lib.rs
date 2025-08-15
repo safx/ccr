@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub mod session_blocks;
+pub mod unified_loader;
 
 // Green phase: Minimal implementation to pass the test
 #[derive(Debug, Clone, PartialEq)]

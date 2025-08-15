@@ -1,24 +1,23 @@
-use chrono::{DateTime, Timelike, Utc};
+use chrono::Utc;
 use colored::*;
-use rayon::prelude::*;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
-use std::fs;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use tokio::fs as async_fs;
-use tokio::task;
 
 // Re-use structures from lib.rs
-use ccr::{ModelPricing, TokenUsage, UsageEntry, calculate_cost};
+use ccr::{ModelPricing, unified_loader, session_blocks};
+use unified_loader::{load_all_data_unified, calculate_today_cost, calculate_session_cost};
+use session_blocks::{identify_session_blocks, find_active_block, calculate_burn_rate};
 
-// Simple Result type alias with Send + Sync for async
+// Simple Result type alias
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-// Static model pricing data - initialized once
+// Static model pricing data
 static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::new(|| {
     let mut map = HashMap::with_capacity(4);
 
@@ -53,7 +52,7 @@ static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::
     );
 
     map.insert(
-        "claude-3.5-sonnet-20241022",
+        "claude-3-5-sonnet-20241022",
         ModelPricing {
             input_cost_per_token: Some(0.000003),
             output_cost_per_token: Some(0.000015),
@@ -65,502 +64,89 @@ static MODEL_PRICING: LazyLock<HashMap<&'static str, ModelPricing>> = LazyLock::
     map
 });
 
-// Hook input schema
+// Input structure
 #[derive(Debug, Deserialize)]
 struct StatuslineHookJson {
     session_id: String,
-    transcript_path: String,
     cwd: String,
-    model: ModelInfo,
-    #[serde(default)]
-    _workspace: Option<serde_json::Value>,
-    #[serde(default)]
-    _version: Option<String>,
+    transcript_path: String,
+    model: Model,
 }
 
 #[derive(Debug, Deserialize)]
-struct ModelInfo {
-    #[serde(default)]
-    _id: String,
+struct Model {
+    #[serde(alias = "_id")]
+    id: Option<String>,
     display_name: String,
 }
 
-// Transcript message structure for parsing JSONL
-#[derive(Debug, Deserialize)]
-struct TranscriptMessage {
-    #[serde(rename = "type")]
-    message_type: String,
-    #[serde(default)]
-    message: Option<TranscriptMessageContent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TranscriptMessageContent {
-    #[serde(default)]
-    usage: Option<TranscriptUsage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TranscriptUsage {
-    #[serde(default)]
-    input_tokens: Option<u64>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    output_tokens: Option<u64>,
-    #[serde(default)]
-    cache_creation_input_tokens: Option<u64>,
-    #[serde(default)]
-    cache_read_input_tokens: Option<u64>,
-}
-
-// Optimized model pricing lookup
-fn get_model_pricing(model_name: &str) -> Option<&'static ModelPricing> {
-    // Direct match first
-    if let Some(pricing) = MODEL_PRICING.get(model_name) {
-        return Some(pricing);
-    }
-
-    // Lowercase once for comparison
-    let lower_name = model_name.to_lowercase();
-
-    // Partial match
-    for (key, pricing) in MODEL_PRICING.iter() {
-        if model_name.contains(key) || key.contains(model_name) {
-            return Some(pricing);
-        }
-    }
-
-    // Default based on model type
-    if lower_name.contains("opus") {
-        MODEL_PRICING.get("claude-opus-4-1-20250805")
-    } else if lower_name.contains("sonnet") {
-        MODEL_PRICING.get("claude-sonnet-4-20250514")
-    } else {
-        None
-    }
-}
-
-// Get Claude configuration directories - cached
+// Get Claude paths
 fn get_claude_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::with_capacity(2);
-    let home = home::home_dir().unwrap_or_default();
-
-    // Check environment variable first
-    if let Ok(custom_path) = env::var("CLAUDE_CONFIG_DIR") {
-        for path in custom_path.split(',') {
-            let path = path.trim();
-            if !path.is_empty() {
-                let p = PathBuf::from(path);
-                if p.exists() && p.is_dir() {
-                    paths.push(p);
-                }
-            }
-        }
-    } else {
-        // Default paths
-        let config_path = home.join(".config").join("claude");
-        if config_path.exists() && config_path.is_dir() {
-            paths.push(config_path);
-        }
-        let home_path = home.join(".claude");
-        if home_path.exists() && home_path.is_dir() {
-            paths.push(home_path);
-        }
+    let mut paths = Vec::new();
+    
+    if let Ok(home) = env::var("HOME") {
+        let home_path = PathBuf::from(home);
+        
+        // Primary path
+        paths.push(home_path.join(".claude"));
+        
+        // macOS paths
+        paths.push(home_path.join("Library/Application Support/Claude"));
+        
+        // Linux paths  
+        paths.push(home_path.join(".config/Claude"));
+        paths.push(home_path.join(".local/share/Claude"));
     }
-
-    paths
-}
-
-// Format currency - simple and clean
-#[inline]
-fn format_currency(amount: f64) -> String {
-    format!("${:.2}", amount)
-}
-
-// Format number with thousands separator (like toLocaleString)
-#[inline]
-fn format_number_with_commas(n: usize) -> String {
-    let s = n.to_string();
-    let mut result = String::new();
-    let mut count = 0;
-
-    for c in s.chars().rev() {
-        if count == 3 {
-            result.push(',');
-            count = 0;
-        }
-        result.push(c);
-        count += 1;
+    
+    // Windows paths
+    if let Ok(appdata) = env::var("APPDATA") {
+        paths.push(PathBuf::from(appdata).join("Claude"));
     }
-
-    result.chars().rev().collect()
+    
+    paths.into_iter().filter(|p| p.exists()).collect()
 }
 
-// Format remaining time
-#[inline]
-fn format_remaining_time(remaining_minutes: u64) -> String {
-    let mins = remaining_minutes % 60;
-    if remaining_minutes > 60 {
-        let hours = remaining_minutes / 60;
-        format!("{}h {}m left", hours, mins)
-    } else {
-        format!("{}m left", mins)
-    }
-}
-
-// Floor timestamp to hour
-#[inline]
-#[allow(dead_code)]
-fn floor_to_hour(dt: DateTime<Utc>) -> DateTime<Utc> {
-    dt.date_naive()
-        .and_hms_opt(dt.hour(), 0, 0)
-        .unwrap()
-        .and_utc()
-}
-
-// Optimized duplicate detection
-#[inline]
-fn is_duplicate_fast(entry: &UsageEntry, processed_hashes: &mut HashSet<u64>) -> bool {
-    if let (Some(message), Some(request_id)) = (&entry.message, &entry.request_id)
-        && let Some(message_id) = &message.id
-    {
-        // Use hash instead of string concatenation
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        message_id.hash(&mut hasher);
-        request_id.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        if processed_hashes.contains(&hash) {
-            return true;
-        }
-        processed_hashes.insert(hash);
-    }
-    false
-}
-
-// Calculate cost from entry - optimized
-#[inline]
-fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
-    // Check for pre-calculated cost
-    if let Some(cost) = entry.cost_usd {
-        return cost;
-    }
-
-    // Calculate from usage data
-    if let Some(message) = &entry.message
-        && let Some(usage) = &message.usage
-    {
-        let model_name = message.model.as_ref().or(entry.model.as_ref());
-
-        if let Some(model_name) = model_name
-            && let Some(pricing) = get_model_pricing(model_name)
-        {
-            let tokens = TokenUsage {
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                cache_creation_tokens: usage.cache_creation_input_tokens,
-                cache_read_tokens: usage.cache_read_input_tokens,
-            };
-            return calculate_cost(&tokens, pricing);
-        }
-    }
-
-    0.0
-}
-
-// Process JSONL file efficiently with parallel line processing
-fn process_jsonl_file(
-    path: &Path,
-    processor: impl Fn(&UsageEntry) -> Option<f64> + Sync,
-    processed_hashes: &mut HashSet<u64>,
-) -> Result<f64> {
-    use std::sync::{Arc, Mutex};
-
-    let file = fs::File::open(path)?;
-    let reader = BufReader::with_capacity(128 * 1024, file); // Increased to 128KB buffer
-
-    // Read all lines into memory for parallel processing
-    let lines: Vec<String> = reader
-        .lines()
-        .map_while(|line| line.ok())
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-
-    // Use a mutex for the hash set to avoid duplicates
-    let hashes_mutex = Arc::new(Mutex::new(std::mem::take(processed_hashes)));
-
-    // Process lines in parallel using rayon
-    let total: f64 = lines
-        .par_iter()
-        .with_min_len(10) // Process at least 10 lines per task for better efficiency
-        .filter_map(|line| {
-            if let Ok(entry) = serde_json::from_str::<UsageEntry>(line) {
-                let mut hashes = hashes_mutex.lock().unwrap();
-                if !is_duplicate_fast(&entry, &mut hashes) {
-                    drop(hashes); // Release lock early
-                    processor(&entry)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .sum();
-
-    // Update the original hash set
-    *processed_hashes = Arc::try_unwrap(hashes_mutex)
-        .unwrap_or_else(|_| panic!("Failed to unwrap Arc"))
-        .into_inner()
-        .unwrap();
-
-    Ok(total)
-}
-
-// Load session usage by ID - optimized
-async fn load_session_usage_by_id(session_id: &str) -> Result<Option<f64>> {
-    let claude_paths = get_claude_paths();
-    let session_id = session_id.to_string();
-
-    // Process paths in parallel
-    let tasks: Vec<_> = claude_paths
-        .into_iter()
-        .map(|base_path| {
-            let session_id = session_id.clone();
-            task::spawn_blocking(move || -> Result<f64> {
-                let projects_path = base_path.join("projects");
-                if !projects_path.exists() {
-                    return Ok(0.0);
-                }
-
-                let mut total_cost = 0.0;
-                let mut processed_hashes = HashSet::with_capacity(1000);
-
-                for entry in fs::read_dir(&projects_path)? {
-                    let entry = entry?;
-                    if !entry.file_type()?.is_dir() {
-                        continue;
-                    }
-
-                    let session_file = entry.path().join(format!("{}.jsonl", session_id));
-                    if session_file.exists() {
-                        total_cost += process_jsonl_file(
-                            &session_file,
-                            |e| Some(calculate_entry_cost(e)),
-                            &mut processed_hashes,
-                        )?;
-                    }
-                }
-
-                Ok(total_cost)
-            })
-        })
-        .collect();
-
-    let mut total = 0.0;
-    for task in tasks {
-        total += task.await??;
-    }
-
-    Ok(if total > 0.0 { Some(total) } else { None })
-}
-
-// Load today's usage data - optimized
-async fn load_today_usage_data() -> Result<f64> {
-    let claude_paths = get_claude_paths();
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-
-    // Process paths in parallel to collect entries
-    let tasks: Vec<_> = claude_paths
-        .into_iter()
-        .map(|base_path| {
-            let today = today.clone(); // Simple clone of 10-char string
-            task::spawn_blocking(move || -> Result<Vec<UsageEntry>> {
-                let projects_path = base_path.join("projects");
-                if !projects_path.exists() {
-                    return Ok(Vec::new());
-                }
-
-                // Collect all JSONL files first
-                let mut jsonl_files = Vec::new();
-                for project_entry in fs::read_dir(&projects_path)? {
-                    let project_entry = project_entry?;
-                    if !project_entry.file_type()?.is_dir() {
-                        continue;
-                    }
-
-                    for file_entry in fs::read_dir(project_entry.path())? {
-                        let file_entry = file_entry?;
-                        let file_name = file_entry.file_name();
-                        if file_name.to_string_lossy().ends_with(".jsonl") {
-                            jsonl_files.push(file_entry.path());
-                        }
-                    }
-                }
-
-                // Process files in parallel to collect today's entries
-                let entries: Vec<UsageEntry> = jsonl_files
-                    .par_iter()
-                    .flat_map(|path| {
-                        let file = fs::File::open(path).ok()?;
-                        let reader = BufReader::with_capacity(128 * 1024, file);
-
-                        let mut entries = Vec::new();
-                        for line in reader.lines().map_while(|line| line.ok()) {
-                            if line.trim().is_empty() {
-                                continue;
-                            }
-
-                            if let Ok(entry) = serde_json::from_str::<UsageEntry>(&line)
-                                && let Some(timestamp) = &entry.timestamp
-                                && timestamp.starts_with(&today)
-                            {
-                                entries.push(entry);
-                            }
-                        }
-                        Some(entries)
-                    })
-                    .flatten()
-                    .collect();
-
-                Ok(entries)
-            })
-        })
-        .collect();
-
-    // Collect all entries from all paths
-    let mut all_entries = Vec::new();
-    for task in tasks {
-        all_entries.extend(task.await??);
-    }
-
-    // Now do deduplication and calculate cost
-    let mut processed_hashes = HashSet::with_capacity(all_entries.len());
-    let mut total = 0.0;
-
-    for entry in all_entries {
-        if !is_duplicate_fast(&entry, &mut processed_hashes) {
-            total += calculate_entry_cost(&entry);
-        }
-    }
-
-    Ok(total)
-}
-
-// Active block info
-struct BlockInfo {
-    block_cost: f64,
-    burn_rate_per_hour: Option<f64>,
-    remaining_minutes: u64,
-}
-
-// Load active block using proper session blocks implementation
-async fn load_active_block() -> Result<Option<BlockInfo>> {
-    use ccr::session_blocks::{
-        calculate_burn_rate, find_active_block, identify_session_blocks, load_all_entries,
-    };
-
-    let claude_paths = get_claude_paths();
-    let now = Utc::now();
-
-    // Load all entries
-    let entries = load_all_entries(&claude_paths).await?;
-
-    // Identify session blocks
-    let blocks = identify_session_blocks(entries, &MODEL_PRICING);
-
-    // Find active block
-    if let Some(active_block) = find_active_block(&blocks) {
-        let remaining = active_block.end_time.signed_duration_since(now);
-        let remaining_minutes = remaining.num_minutes().max(0) as u64;
-
-        let burn_rate = calculate_burn_rate(active_block);
-
-        return Ok(Some(BlockInfo {
-            block_cost: active_block.cost_usd,
-            burn_rate_per_hour: burn_rate,
-            remaining_minutes,
-        }));
-    }
-
-    Ok(None)
-}
-
-// Get git branch - optimized
+// Get git branch
 async fn get_git_branch(cwd: &Path) -> Option<String> {
     let head_path = cwd.join(".git").join("HEAD");
-
+    
     if let Ok(content) = async_fs::read_to_string(&head_path).await {
         let trimmed = content.trim();
-
+        
         // Parse ref format
         if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
             return Some(branch.to_string());
         }
-
+        
         // Detached HEAD - return short hash
         if trimmed.len() >= 7 && !trimmed.starts_with("ref:") {
             return Some(trimmed[..7].to_string());
         }
     }
-
+    
     None
 }
 
-// Calculate context tokens from JSONL transcript - matching ccusage implementation
-async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
-    // Try to read the file
-    let content = match async_fs::read_to_string(transcript_path).await {
-        Ok(content) => content,
-        Err(_) => return None,
-    };
+// Format currency
+fn format_currency(value: f64) -> String {
+    format!("${:.2}", value)
+}
 
-    // Parse JSONL lines from last to first (most recent usage info)
-    let lines: Vec<&str> = content.lines().rev().collect();
-
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        // Try to parse as TranscriptMessage
-        if let Ok(msg) = serde_json::from_str::<TranscriptMessage>(trimmed) {
-            // Check if this is an assistant message with usage info
-            if msg.message_type == "assistant"
-                && let Some(message) = msg.message
-                && let Some(usage) = message.usage
-                && let Some(input_tokens) = usage.input_tokens
-            {
-                // Calculate total input tokens including cache
-                let total_input = input_tokens
-                    + usage.cache_creation_input_tokens.unwrap_or(0)
-                    + usage.cache_read_input_tokens.unwrap_or(0);
-
-                // Calculate percentage (capped at 100% for display)
-                let max_tokens = 200_000;
-                let percentage = ((total_input as usize * 100) / max_tokens).min(9999);
-
-                let percentage_str = format!("{}%", percentage);
-                let percentage_str = if percentage < 50 {
-                    percentage_str.green()
-                } else if percentage < 80 {
-                    percentage_str.yellow()
-                } else {
-                    percentage_str.red()
-                };
-
-                // Format with thousands separator
-                let formatted = format_number_with_commas(total_input as usize);
-
-                return Some(format!("{} ({})", formatted, percentage_str));
-            }
+// Format remaining time
+fn format_remaining_time(minutes: u64) -> String {
+    if minutes == 0 {
+        "Block expired".to_string()
+    } else if minutes < 60 {
+        format!("{}m left", minutes)
+    } else {
+        let hours = minutes / 60;
+        let mins = minutes % 60;
+        if mins > 0 {
+            format!("{}h {}m left", hours, mins)
+        } else {
+            format!("{}h left", hours)
         }
     }
-
-    // No valid usage information found
-    None
 }
 
 #[tokio::main]
@@ -578,9 +164,7 @@ async fn main() -> Result<()> {
     // Read input JSON from stdin
     let mut buffer = String::new();
     io::stdin().read_to_string(&mut buffer)?;
-    let input_json = buffer;
-
-    let hook_data: StatuslineHookJson = serde_json::from_str(&input_json)?;
+    let hook_data: StatuslineHookJson = serde_json::from_str(&buffer)?;
 
     // Check Claude paths exist
     let claude_paths = get_claude_paths();
@@ -589,19 +173,24 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Load all data in parallel
-    let (session_data, today_cost, block_data, context_info, git_branch) = tokio::join!(
-        load_session_usage_by_id(&hook_data.session_id),
-        load_today_usage_data(),
-        load_active_block(),
-        calculate_context_tokens(Path::new(&hook_data.transcript_path)),
+    // Load ALL data ONCE
+    let (unified_data, git_branch) = tokio::join!(
+        load_all_data_unified(&claude_paths, &hook_data.session_id),
         get_git_branch(Path::new(&hook_data.cwd))
     );
 
-    // Handle results
-    let session_cost = session_data?.unwrap_or(0.0);
-    let today_cost = today_cost?;
-    let block_info = block_data?;
+    let unified_data = unified_data?;
+
+
+
+    // Calculate metrics from the unified data
+    let today_cost = calculate_today_cost(&unified_data, &MODEL_PRICING);
+    let session_cost = calculate_session_cost(&unified_data, &hook_data.session_id, &MODEL_PRICING)
+        .unwrap_or(0.0);
+
+    // Calculate active block
+    let blocks = identify_session_blocks(unified_data.all_entries.clone(), &MODEL_PRICING);
+    let active_block = find_active_block(&blocks);
 
     // Format output
     let current_dir = Path::new(&hook_data.cwd)
@@ -626,14 +215,18 @@ async fn main() -> Result<()> {
 
     let session_display = format_currency(session_cost);
 
-    let (block_display, burn_rate_display, remaining_display) = if let Some(block) = block_info {
-        let block_str = format!("{} block", format_currency(block.block_cost));
-
-        let burn_str = if let Some(rate) = block.burn_rate_per_hour {
+    let (block_display, burn_rate_display, remaining_display) = if let Some(block) = active_block {
+        let now = Utc::now();
+        let remaining = block.end_time.signed_duration_since(now);
+        let remaining_minutes = remaining.num_minutes().max(0) as u64;
+        
+        let block_str = format!("{} block", format_currency(block.cost_usd));
+        
+        let burn_str = if let Some(rate) = calculate_burn_rate(block) {
             let rate_str = format!("{}/hr", format_currency(rate));
-            let colored_rate = if rate < 200.0 {
+            let colored_rate = if rate < 30.0 {
                 rate_str.green()
-            } else if rate < 400.0 {
+            } else if rate < 60.0 {
                 rate_str.yellow()
             } else {
                 rate_str.red()
@@ -642,25 +235,15 @@ async fn main() -> Result<()> {
         } else {
             String::new()
         };
-
-        let remaining = if block.remaining_minutes > 0 {
-            format!(
-                " ⏰ {}",
-                format_remaining_time(block.remaining_minutes).magenta()
-            )
-        } else {
-            String::new()
-        };
-
+        
+        let remaining = format!(
+            " ⏰ {}",
+            format_remaining_time(remaining_minutes).magenta()
+        );
+        
         (block_str, burn_str, remaining)
     } else {
         ("No active block".to_string(), String::new(), String::new())
-    };
-
-    let context_display = if let Some(ctx) = context_info {
-        format!(" ⚖️ {}", ctx)
-    } else {
-        String::new()
     };
 
     // Build and print status line
@@ -668,13 +251,12 @@ async fn main() -> Result<()> {
     print!("{}{} 👤 {}", current_dir, branch_display, colored_model);
     print!("\x1b[0m"); // Reset after model name
     print!(
-        "{} 💰 {} today, {} session, {}{}{}",
+        "{} 💰 {} today, {} session, {}{}",
         remaining_display,
         format_currency(today_cost),
         session_display,
         block_display,
-        burn_rate_display,
-        context_display
+        burn_rate_display
     );
     println!();
 
