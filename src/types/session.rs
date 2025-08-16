@@ -16,7 +16,14 @@ pub struct SessionBlock {
 #[derive(Debug, Clone)]
 pub struct UsageSnapshot {
     pub all_entries: Vec<UsageEntry>,
+    pub by_session: Option<(String, Vec<UsageEntry>)>,
+    pub today_entries: Vec<UsageEntry>,
+}
+
+/// Merged snapshot with all session data
+#[derive(Debug)]
+pub struct MergedUsageSnapshot {
+    pub all_entries: Vec<UsageEntry>,
     pub by_session: HashMap<String, Vec<UsageEntry>>,
     pub today_entries: Vec<UsageEntry>,
-    pub processed_hashes: std::collections::HashSet<String>,
 }

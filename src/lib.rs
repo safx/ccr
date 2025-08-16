@@ -9,8 +9,8 @@ pub mod utils;
 // Re-export commonly used items for backward compatibility
 pub use pricing::{MODEL_PRICING, calculate_cost};
 pub use types::{
-    Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage, Usage, UsageEntry,
-    UsageSnapshot,
+    MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
+    Usage, UsageEntry, UsageSnapshot,
 };
 pub use utils::{create_entry_hash, is_duplicate};
 

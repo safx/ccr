@@ -8,14 +8,14 @@ use std::sync::{Arc, Mutex};
 use tokio::task;
 
 use crate::pricing::calculate_cost;
-use crate::types::{ModelPricing, TokenUsage, UsageEntry, UsageSnapshot};
+use crate::types::{MergedUsageSnapshot, ModelPricing, TokenUsage, UsageEntry, UsageSnapshot};
 use crate::utils::create_entry_hash;
 
 /// Load all data with optimized parallelism
 pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &str,
-) -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
     // Intentionally leak strings to avoid cloning overhead in spawn_blocking threads
     // These are only allocated once per program run, so the memory impact is minimal
     let today: &'static str = Utc::now().format("%Y-%m-%d").to_string().leak();
@@ -36,9 +36,8 @@ pub async fn load_all_data(
                     if !projects_path.exists() {
                         return Ok(UsageSnapshot {
                             all_entries: Vec::new(),
-                            by_session: HashMap::new(),
+                            by_session: None,
                             today_entries: Vec::new(),
-                            processed_hashes: HashSet::new(),
                         });
                     }
 
@@ -130,16 +129,16 @@ pub async fn load_all_data(
                         }
                     }
 
-                    let mut by_session = HashMap::new();
-                    if !target_session_entries.is_empty() {
-                        by_session.insert(target_session.to_string(), target_session_entries);
-                    }
+                    let by_session = if !target_session_entries.is_empty() {
+                        Some((target_session.to_string(), target_session_entries))
+                    } else {
+                        None
+                    };
 
                     Ok(UsageSnapshot {
                         all_entries,
                         by_session,
                         today_entries,
-                        processed_hashes: HashSet::new(), // Not needed as we use global
                     })
                 },
             )
@@ -147,13 +146,10 @@ pub async fn load_all_data(
         .collect();
 
     // Merge results from all base paths
-    let mut merged = UsageSnapshot {
+    let mut merged = MergedUsageSnapshot {
         all_entries: Vec::with_capacity(100000),
         by_session: HashMap::new(),
         today_entries: Vec::with_capacity(10000),
-        processed_hashes: Arc::try_unwrap(global_hashes)
-            .map(|mutex| mutex.into_inner().unwrap())
-            .unwrap_or_else(|arc| arc.lock().unwrap().clone()),
     };
 
     for task in tasks {
@@ -161,7 +157,7 @@ pub async fn load_all_data(
         merged.all_entries.extend(data.all_entries);
         merged.today_entries.extend(data.today_entries);
 
-        for (session_id, entries) in data.by_session {
+        if let Some((session_id, entries)) = data.by_session {
             merged
                 .by_session
                 .entry(session_id)
@@ -180,7 +176,7 @@ pub async fn load_all_data(
 
 /// Calculate today's cost from usage snapshot
 pub fn calculate_today_cost(
-    data: &UsageSnapshot,
+    data: &MergedUsageSnapshot,
     pricing_map: &HashMap<&str, ModelPricing>,
 ) -> f64 {
     data.today_entries
@@ -191,7 +187,7 @@ pub fn calculate_today_cost(
 
 /// Calculate session cost from usage snapshot
 pub fn calculate_session_cost(
-    data: &UsageSnapshot,
+    data: &MergedUsageSnapshot,
     session_id: &str,
     pricing_map: &HashMap<&str, ModelPricing>,
 ) -> Option<f64> {
