@@ -17,10 +17,10 @@ pub fn floor_to_hour(timestamp: DateTime<Utc>) -> DateTime<Utc> {
 /// Identify session blocks from sorted entries
 /// This matches the TypeScript implementation in ccusage
 pub fn identify_session_blocks(
-    entries: Vec<UsageEntry>,
+    sorted_entries: &[UsageEntry], // Already sorted, passed by reference
     pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> Vec<SessionBlock> {
-    if entries.is_empty() {
+    if sorted_entries.is_empty() {
         return Vec::new();
     }
 
@@ -29,28 +29,12 @@ pub fn identify_session_blocks(
     let mut blocks = Vec::new();
     let mut processed_hashes = HashSet::new();
 
-    // Sort entries by timestamp
-    let mut sorted_entries = entries;
-    sorted_entries.sort_by(|a, b| {
-        let time_a = a
-            .timestamp
-            .as_ref()
-            .and_then(|t| t.parse::<DateTime<Utc>>().ok())
-            .unwrap_or(DateTime::<Utc>::MIN_UTC);
-        let time_b = b
-            .timestamp
-            .as_ref()
-            .and_then(|t| t.parse::<DateTime<Utc>>().ok())
-            .unwrap_or(DateTime::<Utc>::MIN_UTC);
-        time_a.cmp(&time_b)
-    });
-
     let mut current_block_start: Option<DateTime<Utc>> = None;
     let mut current_block_entries: Vec<UsageEntry> = Vec::new();
     let mut current_block_cost = 0.0;
     let mut last_entry_time: Option<DateTime<Utc>> = None;
 
-    for entry in sorted_entries {
+    for entry in sorted_entries.iter() {
         // Parse timestamp
         let entry_time = match entry
             .timestamp
@@ -107,7 +91,7 @@ pub fn identify_session_blocks(
         if current_block_start.is_none() {
             // Start first block
             current_block_start = Some(floor_to_hour(entry_time));
-            current_block_entries.push(entry);
+            current_block_entries.push(entry.clone());
             current_block_cost += entry_cost;
             last_entry_time = Some(entry_time);
         } else {
@@ -153,11 +137,11 @@ pub fn identify_session_blocks(
 
                 // Start new block
                 current_block_start = Some(floor_to_hour(entry_time));
-                current_block_entries = vec![entry];
+                current_block_entries = vec![entry.clone()];
                 current_block_cost = entry_cost;
             } else {
                 // Add to current block
-                current_block_entries.push(entry);
+                current_block_entries.push(entry.clone());
                 current_block_cost += entry_cost;
             }
 

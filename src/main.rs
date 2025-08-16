@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
             .unwrap_or(0.0);
 
     // Calculate active block
-    let blocks = identify_session_blocks(usage_snapshot.all_entries.clone(), &MODEL_PRICING);
+    let blocks = identify_session_blocks(&usage_snapshot.all_entries, &MODEL_PRICING);
     let (block_cost, burn_rate, remaining_minutes) = if let Some(block) = find_active_block(&blocks)
     {
         (
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
             block
                 .end_time
                 .signed_duration_since(Utc::now())
-                .num_minutes()
+                .num_minutes(),
         )
     } else {
         (0.0, None, 0)

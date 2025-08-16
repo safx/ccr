@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 use serde_json;
 use std::collections::{HashMap, HashSet};
@@ -54,7 +54,8 @@ pub async fn load_all_data(
                             let file_name = file_entry.file_name();
                             let file_name_str = file_name.to_string_lossy();
                             if file_name_str.ends_with(".jsonl") {
-                                let session_from_file = file_name_str[..file_name_str.len() - 6].to_string();
+                                let session_from_file =
+                                    file_name_str[..file_name_str.len() - 6].to_string();
                                 all_files.push((file_entry.path(), session_from_file));
                             }
                         }
@@ -110,9 +111,12 @@ pub async fn load_all_data(
                             }
 
                             // Check conditions first
-                            let is_today = entry.timestamp.as_ref()
+                            let is_today = entry
+                                .timestamp
+                                .as_ref()
                                 .map_or(false, |ts| ts.starts_with(today.as_str()));
-                            let is_target_session = session_file_id.as_str() == target_session.as_str();
+                            let is_target_session =
+                                session_file_id.as_str() == target_session.as_str();
 
                             // Only clone if necessary
                             if is_today || is_target_session {
@@ -173,6 +177,21 @@ pub async fn load_all_data(
                 .extend(entries);
         }
     }
+
+    // Sort all entries by timestamp once
+    merged.all_entries.sort_by(|a, b| {
+        let time_a = a
+            .timestamp
+            .as_ref()
+            .and_then(|t| t.parse::<DateTime<Utc>>().ok())
+            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        let time_b = b
+            .timestamp
+            .as_ref()
+            .and_then(|t| t.parse::<DateTime<Utc>>().ok())
+            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        time_a.cmp(&time_b)
+    });
 
     Ok(merged)
 }
