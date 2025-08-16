@@ -146,32 +146,28 @@ pub async fn load_all_data(
         .collect();
 
     // Merge results from all base paths
-    let mut merged = MergedUsageSnapshot {
-        all_entries: Vec::with_capacity(100000),
-        by_session: HashMap::new(),
-        today_entries: Vec::with_capacity(10000),
-    };
+    let mut all_entries = Vec::with_capacity(50000);
+    let mut by_session: HashMap<String, Vec<UsageEntry>> = HashMap::new();
+    let mut today_entries = Vec::with_capacity(2000);
 
     for task in tasks {
         let data = task.await??;
-        merged.all_entries.extend(data.all_entries);
-        merged.today_entries.extend(data.today_entries);
+        all_entries.extend(data.all_entries);
+        today_entries.extend(data.today_entries);
 
         if let Some((session_id, entries)) = data.by_session {
-            merged
-                .by_session
-                .entry(session_id)
-                .or_default()
-                .extend(entries);
+            by_session.entry(session_id).or_default().extend(entries);
         }
     }
 
     // Sort all entries by timestamp once (string sort is sufficient for ISO 8601)
-    merged
-        .all_entries
-        .sort_by(|a, b| a.timestamp.as_deref().cmp(&b.timestamp.as_deref()));
+    all_entries.sort_by(|a, b| a.timestamp.as_deref().cmp(&b.timestamp.as_deref()));
 
-    Ok(merged)
+    Ok(MergedUsageSnapshot {
+        all_entries,
+        by_session,
+        today_entries,
+    })
 }
 
 /// Calculate today's cost from usage snapshot
