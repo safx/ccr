@@ -9,6 +9,7 @@ use tokio::task;
 
 use crate::pricing::calculate_cost;
 use crate::types::{ModelPricing, TokenUsage, UsageEntry, UsageSnapshot};
+use crate::utils::create_entry_hash;
 
 /// Load all data with optimized parallelism
 pub async fn load_all_data(
@@ -94,7 +95,7 @@ pub async fn load_all_data(
                                 && let (Some(msg_id), Some(req_id)) =
                                     (&message.id, &entry.request_id)
                             {
-                                let hash = format!("{}:{}", msg_id, req_id);
+                                let hash = create_entry_hash(msg_id, req_id);
                                 let mut hashes = global_hashes.lock().unwrap();
                                 if hashes.contains(&hash) {
                                     true

@@ -12,7 +12,7 @@ pub use types::{
     Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage, Usage, UsageEntry,
     UsageSnapshot,
 };
-pub use utils::is_duplicate;
+pub use utils::{create_entry_hash, is_duplicate};
 
 #[cfg(test)]
 mod tests {
@@ -101,6 +101,24 @@ mod tests {
 
         let cost_partial = calculate_cost(&tokens_partial, &pricing);
         assert!((cost_partial - 0.0525).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_create_entry_hash() {
+        // Test basic hash creation
+        let hash1 = create_entry_hash("msg_123", "req_456");
+        assert_eq!(hash1, "msg_123:req_456");
+
+        // Test with different IDs
+        let hash2 = create_entry_hash("msg_789", "req_999");
+        assert_eq!(hash2, "msg_789:req_999");
+
+        // Test uniqueness
+        assert_ne!(hash1, hash2);
+
+        // Test consistency (same inputs produce same output)
+        let hash3 = create_entry_hash("msg_123", "req_456");
+        assert_eq!(hash1, hash3);
     }
 
     #[test]

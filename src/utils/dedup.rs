@@ -1,12 +1,19 @@
 use crate::types::UsageEntry;
 use std::collections::HashSet;
 
+/// Create a unique hash from message_id and request_id
+#[inline]
+pub fn create_entry_hash(message_id: &str, request_id: &str) -> String {
+    format!("{}:{}", message_id, request_id)
+}
+
 // Duplicate detection function
+#[inline]
 pub fn is_duplicate(entry: &UsageEntry, processed_hashes: &mut HashSet<String>) -> bool {
     if let (Some(message), Some(request_id)) = (&entry.message, &entry.request_id)
         && let Some(message_id) = &message.id
     {
-        let unique_hash = format!("{}:{}", message_id, request_id);
+        let unique_hash = create_entry_hash(message_id, request_id);
         if processed_hashes.contains(&unique_hash) {
             return true;
         }
