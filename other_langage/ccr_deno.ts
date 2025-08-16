@@ -294,7 +294,22 @@ async function loadSessionUsageById(sessionId: string): Promise<{ totalCost: num
 // Load today's usage data
 async function loadTodayUsageData(): Promise<number> {
 	const claudePaths = getClaudePaths();
-	const today = new Date().toISOString().split("T")[0];
+	
+	// Get user's timezone
+	const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	
+	// Get today's date string in user's timezone (YYYY-MM-DD format)
+	const now = new Date();
+	const todayDateStr = now.toLocaleDateString('en-CA', { timeZone: userTimezone }); // en-CA gives YYYY-MM-DD
+	
+	// Calculate the UTC range for this local date
+	// This is a simplified approach: check if the entry's local date matches today
+	const isToday = (timestamp: string): boolean => {
+		const entryDate = new Date(timestamp);
+		const entryLocalDateStr = entryDate.toLocaleDateString('en-CA', { timeZone: userTimezone });
+		return entryLocalDateStr === todayDateStr;
+	};
+	
 	let totalCost = 0;
 	const processedHashes = new Set<string>();
 	
@@ -316,7 +331,7 @@ async function loadTodayUsageData(): Promise<number> {
 					for (const line of lines) {
 						try {
 							const entry = JSON.parse(line) as UsageEntry;
-							if (entry.timestamp && entry.timestamp.startsWith(today)) {
+							if (entry.timestamp && isToday(entry.timestamp)) {
 								// Create unique hash for deduplication
 								const messageId = entry.message?.id;
 								const requestId = entry.requestId;
@@ -413,8 +428,8 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 								continue;
 							}
 							
-							// Skip entries without usage data
-							if (!entry.message?.usage) {
+							// Skip entries that have neither usage data nor costUSD
+							if (!entry.message?.usage && !entry.costUSD) {
 								continue;
 							}
 							
