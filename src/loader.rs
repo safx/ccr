@@ -85,7 +85,7 @@ pub async fn load_all_data(
 
                     // Process results with global deduplication
                     let mut all_entries = Vec::with_capacity(50000);
-                    let mut by_session: HashMap<String, Vec<UsageEntry>> = HashMap::new();
+                    let mut target_session_entries: Vec<UsageEntry> = Vec::new();
                     let mut today_entries = Vec::with_capacity(10000);
 
                     for (session_file_id, entries) in results {
@@ -123,14 +123,16 @@ pub async fn load_all_data(
                                 today_entries.push(entry.clone());
                             }
                             if is_target_session {
-                                by_session
-                                    .entry(target_session.to_string())
-                                    .or_default()
-                                    .push(entry.clone());
+                                target_session_entries.push(entry.clone());
                             }
 
                             all_entries.push(entry);
                         }
+                    }
+
+                    let mut by_session = HashMap::new();
+                    if !target_session_entries.is_empty() {
+                        by_session.insert(target_session.to_string(), target_session_entries);
                     }
 
                     Ok(UsageSnapshot {
