@@ -54,8 +54,8 @@ pub async fn load_all_data(
                             let file_name = file_entry.file_name();
                             let file_name_str = file_name.to_string_lossy();
                             if file_name_str.ends_with(".jsonl") {
-                                let session_from_file = file_name_str.trim_end_matches(".jsonl");
-                                all_files.push((file_entry.path(), session_from_file.to_string()));
+                                let session_from_file = file_name_str[..file_name_str.len() - 6].to_string();
+                                all_files.push((file_entry.path(), session_from_file));
                             }
                         }
                     }
@@ -109,19 +109,30 @@ pub async fn load_all_data(
                                 continue;
                             }
 
-                            // Check if it's today's entry
-                            if let Some(timestamp) = &entry.timestamp
-                                && timestamp.starts_with(today.as_str())
-                            {
-                                today_entries.push(entry.clone());
-                            }
+                            // Check conditions first
+                            let is_today = entry.timestamp.as_ref()
+                                .map_or(false, |ts| ts.starts_with(today.as_str()));
+                            let is_target_session = session_file_id.as_str() == target_session.as_str();
 
-                            // Check if it belongs to the target session
-                            if session_file_id == target_session.as_str() {
-                                by_session
-                                    .entry(target_session.to_string())
-                                    .or_default()
-                                    .push(entry.clone());
+                            // Only clone if necessary
+                            if is_today || is_target_session {
+                                if is_today && is_target_session {
+                                    // Need 2 clones
+                                    today_entries.push(entry.clone());
+                                    by_session
+                                        .entry(target_session.to_string())
+                                        .or_default()
+                                        .push(entry.clone());
+                                } else if is_today {
+                                    // Need 1 clone
+                                    today_entries.push(entry.clone());
+                                } else {
+                                    // Need 1 clone (is_target_session)
+                                    by_session
+                                        .entry(target_session.to_string())
+                                        .or_default()
+                                        .push(entry.clone());
+                                }
                             }
 
                             all_entries.push(entry);

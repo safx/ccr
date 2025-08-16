@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
 
     // Build and print status line
     println!(
-        "{reset_color}{current_dir}{branch} 👤 {model}{reset_color}{remaining} 💰 {today} today, {session} session, {block}{burn_rate}{context}",
+        "{reset_color}{current_dir}{branch} 👤 {model}{reset_color}{remaining} 💰 {today} today, {session} session{block}{burn_rate}{context}",
         reset_color = "\x1b[0m",
         current_dir = get_current_dir(&hook_data.cwd),
         branch = if let Some(branch) = git_branch {
@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
         today = format_currency(today_cost),
         session = format_currency(session_cost),
         block = if block_cost > 0.0 {
-            format!("{} block", format_currency(block_cost))
+            format!(", {} block", format_currency(block_cost))
         } else {
             String::new()
         },
