@@ -16,19 +16,20 @@ pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &str,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    // Intentionally leak strings to avoid cloning overhead in spawn_blocking threads
-    // These are only allocated once per program run, so the memory impact is minimal
-    let today: &'static str = Utc::now().format("%Y-%m-%d").to_string().leak();
-    let target_session: &'static str = session_id.to_string().leak();
+    // Simply clone strings for each thread
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let target_session = session_id.to_string();
 
     // Use a shared mutex for deduplication across all threads
-    let global_hashes = Arc::new(Mutex::new(HashSet::with_capacity(100000)));
+    let global_hashes = Arc::new(Mutex::new(HashSet::with_capacity(50000)));
 
     let tasks: Vec<_> = claude_paths
         .iter()
         .map(|base_path| {
             let base_path = base_path.clone();
             let global_hashes = Arc::clone(&global_hashes);
+            let today = today.clone();
+            let target_session = target_session.clone();
 
             task::spawn_blocking(
                 move || -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
@@ -75,9 +76,9 @@ pub async fn load_all_data(
                                         .filter_map(|line| serde_json::from_str(line).ok())
                                         .collect();
 
-                                    (session_file_id.clone(), entries)
+                                    (session_file_id, entries)
                                 }
-                                Err(_) => (session_file_id.clone(), Vec::new()),
+                                Err(_) => (session_file_id, Vec::new()),
                             }
                         })
                         .collect();
@@ -88,39 +89,32 @@ pub async fn load_all_data(
                     let mut today_entries = Vec::with_capacity(10000);
 
                     for (session_file_id, entries) in results {
+                        let mut hashes = global_hashes.lock().unwrap();
                         for entry in entries {
                             // Global deduplication check
-                            let should_skip = if let Some(message) = &entry.message
+                            if let Some(message) = &entry.message
                                 && let (Some(msg_id), Some(req_id)) =
                                     (&message.id, &entry.request_id)
                             {
                                 let hash = create_entry_hash(msg_id, req_id);
-                                let mut hashes = global_hashes.lock().unwrap();
                                 if hashes.contains(&hash) {
-                                    true
-                                } else {
-                                    hashes.insert(hash);
-                                    false
+                                    continue;
                                 }
-                            } else {
-                                false
+                                hashes.insert(hash);
                             };
-
-                            if should_skip {
-                                continue;
-                            }
 
                             // Check conditions first
                             let is_today = entry
                                 .timestamp
                                 .as_ref()
-                                .is_some_and(|ts| ts.starts_with(today));
-                            let is_target_session = session_file_id.as_str() == target_session;
+                                .is_some_and(|ts| ts.starts_with(&today));
+                            let is_target_session = session_file_id == target_session.as_str();
 
                             // Add to appropriate collections
                             if is_today {
                                 today_entries.push(entry.clone());
                             }
+
                             if is_target_session {
                                 target_session_entries.push(entry.clone());
                             }
@@ -130,7 +124,7 @@ pub async fn load_all_data(
                     }
 
                     let by_session = if !target_session_entries.is_empty() {
-                        Some((target_session.to_string(), target_session_entries))
+                        Some((target_session, target_session_entries))
                     } else {
                         None
                     };
