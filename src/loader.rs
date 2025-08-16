@@ -16,8 +16,8 @@ pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &str,
 ) -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    let today = Arc::new(Utc::now().format("%Y-%m-%d").to_string());
-    let target_session = Arc::new(session_id.to_string());
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let target_session = session_id.to_string();
 
     // Use a shared mutex for deduplication across all threads
     let global_hashes = Arc::new(Mutex::new(HashSet::with_capacity(100000)));
@@ -26,8 +26,8 @@ pub async fn load_all_data(
         .iter()
         .map(|base_path| {
             let base_path = base_path.clone();
-            let today = Arc::clone(&today);
-            let target_session = Arc::clone(&target_session);
+            let today = today.clone();
+            let target_session = target_session.clone();
             let global_hashes = Arc::clone(&global_hashes);
 
             task::spawn_blocking(
@@ -115,7 +115,7 @@ pub async fn load_all_data(
                             let is_today = entry
                                 .timestamp
                                 .as_ref()
-                                .is_some_and(|ts| ts.starts_with(today.as_str()));
+                                .is_some_and(|ts| ts.starts_with(&today));
                             let is_target_session =
                                 session_file_id.as_str() == target_session.as_str();
 
