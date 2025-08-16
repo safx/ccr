@@ -119,25 +119,15 @@ pub async fn load_all_data(
                             let is_target_session =
                                 session_file_id.as_str() == target_session.as_str();
 
-                            // Only clone if necessary
-                            if is_today || is_target_session {
-                                if is_today && is_target_session {
-                                    // Need 2 clones
-                                    today_entries.push(entry.clone());
-                                    by_session
-                                        .entry(target_session.to_string())
-                                        .or_default()
-                                        .push(entry.clone());
-                                } else if is_today {
-                                    // Need 1 clone
-                                    today_entries.push(entry.clone());
-                                } else {
-                                    // Need 1 clone (is_target_session)
-                                    by_session
-                                        .entry(target_session.to_string())
-                                        .or_default()
-                                        .push(entry.clone());
-                                }
+                            // Add to appropriate collections
+                            if is_today {
+                                today_entries.push(entry.clone());
+                            }
+                            if is_target_session {
+                                by_session
+                                    .entry(target_session.to_string())
+                                    .or_default()
+                                    .push(entry.clone());
                             }
 
                             all_entries.push(entry);
