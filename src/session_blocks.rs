@@ -1,7 +1,7 @@
 use crate::pricing::calculate_cost;
 use crate::types::{ModelPricing, SessionBlock, TokenUsage, UsageEntry};
 use crate::utils::create_entry_hash;
-use chrono::{DateTime, Duration, Timelike, Utc};
+use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
 
 /// Floor timestamp to the hour (e.g., 14:37:22 → 14:00:00)
@@ -25,7 +25,7 @@ pub fn identify_session_blocks(
         return Vec::new();
     }
 
-    let now = Utc::now();
+    let now = Local::now().with_timezone(&Utc);
     let five_hours = Duration::hours(5);
     let mut blocks = Vec::new();
     let mut processed_hashes = HashSet::new();

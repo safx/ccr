@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{Local, Utc};
 use rayon::prelude::*;
 use serde_json;
 use std::collections::{HashMap, HashSet};
@@ -16,8 +16,8 @@ pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &str,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    // Simply clone strings for each thread
-    let today = Utc::now().format("%Y-%m-%d").to_string();
+    // Get today's date in local timezone
+    let today = Local::now().format("%Y-%m-%d").to_string();
     let target_session = session_id.to_string();
 
     // Use a shared mutex for deduplication across all threads
@@ -104,10 +104,15 @@ pub async fn load_all_data(
                             };
 
                             // Check conditions first
+                            // Parse timestamp and convert to local date for comparison
                             let is_today = entry
                                 .timestamp
                                 .as_ref()
-                                .is_some_and(|ts| ts.starts_with(&today));
+                                .and_then(|ts| ts.parse::<chrono::DateTime<Utc>>().ok())
+                                .map(|dt| {
+                                    dt.with_timezone(&Local).format("%Y-%m-%d").to_string() == today
+                                })
+                                .unwrap_or(false);
                             let is_target_session = session_file_id == target_session.as_str();
 
                             // Add to appropriate collections

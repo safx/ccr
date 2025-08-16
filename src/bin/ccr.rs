@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{Local, Utc};
 use colored::*;
 use std::error::Error;
 use std::io::{self, Read};
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
             calculate_burn_rate(block),
             block
                 .end_time
-                .signed_duration_since(Utc::now())
+                .signed_duration_since(Local::now().with_timezone(&Utc))
                 .num_minutes(),
         )
     } else {

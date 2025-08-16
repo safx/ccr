@@ -1,4 +1,4 @@
-# ccr - Claude Code Usage Reporter
+# ccr - Claude Code Usage StatusLine
 
 A statusline hook for Claude Code that displays usage costs and session information.
 
@@ -33,6 +33,7 @@ The statusline shows:
 - Remaining time at current rate
 - Context usage percentage
 - Active session blocks
+- Current directory 
 - Git branch (when in a git repository)
 
 Example output:
@@ -67,14 +68,6 @@ Claude Code sends JSON via stdin:
   "transcript_path": null
 }
 ```
-
-## Performance
-
-Typical execution time: 270-310ms for ~100k entries across 793 files (628MB).
-
-The loader uses parallel processing at two levels:
-- File-level: Multiple JSONL files processed concurrently
-- Line-level: Lines within each file parsed in parallel
 
 ## Profiling tools
 
