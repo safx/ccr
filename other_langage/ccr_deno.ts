@@ -321,16 +321,16 @@ async function loadTodayUsageData(): Promise<number> {
 								const messageId = entry.message?.id;
 								const requestId = entry.requestId;
 								
-								// Skip entries without proper IDs (following ccusage logic)
-								if (!messageId || !requestId) {
-									continue;
+								// Only perform deduplication if BOTH IDs exist
+								// If either is missing, skip deduplication (entry is kept)
+								if (messageId && requestId) {
+									const uniqueHash = `${messageId}:${requestId}`;
+									if (processedHashes.has(uniqueHash)) {
+										continue; // Skip duplicate
+									}
+									processedHashes.add(uniqueHash);
 								}
-								
-								const uniqueHash = `${messageId}:${requestId}`;
-								if (processedHashes.has(uniqueHash)) {
-									continue; // Skip duplicate
-								}
-								processedHashes.add(uniqueHash);
+								// If either ID is missing, keep the entry (no deduplication check)
 								
 								// Check for pre-calculated costUSD
 								if (entry.costUSD) {
@@ -404,13 +404,8 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 						try {
 							const entry = JSON.parse(line) as UsageEntry;
 							
-							// Validate timestamp (must be ISO format matching ccusage regex)
-							if (!entry.timestamp || typeof entry.timestamp !== 'string') {
-								continue;
-							}
-							// Check ISO format: YYYY-MM-DDTHH:MM:SS[.sss]Z
-							const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
-							if (!isoRegex.test(entry.timestamp)) {
+							// Validate timestamp
+							if (!entry.timestamp) {
 								continue;
 							}
 							const entryTime = new Date(entry.timestamp);
@@ -418,17 +413,8 @@ async function loadActiveBlock(): Promise<{ blockInfo: string; burnRateInfo: str
 								continue;
 							}
 							
-							// Validate message structure
-							if (!entry.message || typeof entry.message !== 'object') {
-								continue;
-							}
-							
-							// Validate usage data exists and has required fields
-							const usage = entry.message.usage;
-							if (!usage || typeof usage !== 'object') {
-								continue;
-							}
-							if (typeof usage.input_tokens !== 'number' || typeof usage.output_tokens !== 'number') {
+							// Skip entries without usage data
+							if (!entry.message?.usage) {
 								continue;
 							}
 							
