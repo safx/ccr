@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageEntry {
     pub timestamp: Option<String>,
@@ -19,14 +19,14 @@ pub struct UsageEntry {
     pub message_usage: Option<Usage>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Message {
     pub id: Option<String>,
     pub model: Option<String>,
     pub usage: Option<Usage>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Usage {
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,

@@ -28,7 +28,7 @@ pub fn format_remaining_time(minutes: i64) -> String {
     } else {
         let hours = minutes / 60;
         let mins = minutes % 60;
-        if mins > 0 {
+        if hours > 0 {
             format!("{}h {}m left", hours, mins)
         } else {
             format!("{}h left", hours)
