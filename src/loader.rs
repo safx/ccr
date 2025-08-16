@@ -28,8 +28,6 @@ pub async fn load_all_data(
         .iter()
         .map(|base_path| {
             let base_path = base_path.clone();
-            let today = today;
-            let target_session = target_session;
             let global_hashes = Arc::clone(&global_hashes);
 
             task::spawn_blocking(

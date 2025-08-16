@@ -3,6 +3,10 @@ name = "ccr"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "ccr"
+path = "src/bin/ccr.rs"
+
 [dependencies]
 tokio = { version = "1.47", default-features = false, features = ["rt-multi-thread", "fs", "macros", "sync"] }
 colored = "3"
