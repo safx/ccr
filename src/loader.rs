@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use rayon::prelude::*;
 use serde_json;
 use std::collections::{HashMap, HashSet};
@@ -55,7 +55,7 @@ pub async fn load_all_data(
                             let file_name_str = file_name.to_string_lossy();
                             if file_name_str.ends_with(".jsonl") {
                                 let session_from_file =
-                                    file_name_str[..file_name_str.len() - 6].to_string();
+                                    file_name_str.trim_end_matches(".jsonl").to_string();
                                 all_files.push((file_entry.path(), session_from_file));
                             }
                         }
@@ -114,7 +114,7 @@ pub async fn load_all_data(
                             let is_today = entry
                                 .timestamp
                                 .as_ref()
-                                .map_or(false, |ts| ts.starts_with(today.as_str()));
+                                .is_some_and(|ts| ts.starts_with(today.as_str()));
                             let is_target_session =
                                 session_file_id.as_str() == target_session.as_str();
 
