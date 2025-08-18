@@ -1,4 +1,3 @@
-use chrono::{Local, Utc};
 use rayon::prelude::*;
 use serde_json;
 use std::collections::{HashMap, HashSet};
@@ -16,8 +15,6 @@ pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &str,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    // Get today's date in local timezone
-    let today = Local::now().format("%Y-%m-%d").to_string();
     let target_session = session_id.to_string();
 
     // Use a shared mutex for deduplication across all threads
@@ -28,7 +25,6 @@ pub async fn load_all_data(
         .map(|base_path| {
             let base_path = base_path.clone();
             let global_hashes = Arc::clone(&global_hashes);
-            let today = today.clone();
             let target_session = target_session.clone();
 
             task::spawn_blocking(
@@ -38,7 +34,6 @@ pub async fn load_all_data(
                         return Ok(UsageSnapshot {
                             all_entries: Vec::new(),
                             by_session: None,
-                            today_entries: Vec::new(),
                         });
                     }
 
@@ -86,7 +81,6 @@ pub async fn load_all_data(
                     // Process results with global deduplication
                     let mut all_entries = Vec::with_capacity(50000);
                     let mut target_session_entries: Vec<UsageEntry> = Vec::new();
-                    let mut today_entries = Vec::with_capacity(10000);
 
                     for (session_file_id, entries) in results {
                         let mut hashes = global_hashes.lock().unwrap();
@@ -103,22 +97,8 @@ pub async fn load_all_data(
                                 hashes.insert(hash);
                             };
 
-                            // Check conditions first
-                            // Parse timestamp and convert to local date for comparison
-                            let is_today = entry
-                                .timestamp
-                                .as_ref()
-                                .and_then(|ts| ts.parse::<chrono::DateTime<Utc>>().ok())
-                                .map(|dt| {
-                                    dt.with_timezone(&Local).format("%Y-%m-%d").to_string() == today
-                                })
-                                .unwrap_or(false);
+                            // Check if this is the target session
                             let is_target_session = session_file_id == target_session.as_str();
-
-                            // Add to appropriate collections
-                            if is_today {
-                                today_entries.push(entry.clone());
-                            }
 
                             if is_target_session {
                                 target_session_entries.push(entry.clone());
@@ -137,7 +117,6 @@ pub async fn load_all_data(
                     Ok(UsageSnapshot {
                         all_entries,
                         by_session,
-                        today_entries,
                     })
                 },
             )
@@ -147,12 +126,10 @@ pub async fn load_all_data(
     // Merge results from all base paths
     let mut all_entries = Vec::with_capacity(50000);
     let mut by_session: HashMap<String, Vec<UsageEntry>> = HashMap::new();
-    let mut today_entries = Vec::with_capacity(2000);
 
     for task in tasks {
         let data = task.await??;
         all_entries.extend(data.all_entries);
-        today_entries.extend(data.today_entries);
 
         if let Some((session_id, entries)) = data.by_session {
             by_session.entry(session_id).or_default().extend(entries);
@@ -165,7 +142,6 @@ pub async fn load_all_data(
     Ok(MergedUsageSnapshot {
         all_entries,
         by_session,
-        today_entries,
     })
 }
 
@@ -174,7 +150,7 @@ pub fn calculate_today_cost(
     data: &MergedUsageSnapshot,
     pricing_map: &HashMap<&str, ModelPricing>,
 ) -> f64 {
-    data.today_entries
+    data.today_entries()
         .par_iter() // Use parallel iterator for cost calculation
         .map(|entry| calculate_entry_cost(entry, pricing_map))
         .sum()
