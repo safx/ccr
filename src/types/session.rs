@@ -1,3 +1,4 @@
+use super::ids::SessionId;
 use super::usage::UsageEntry;
 use chrono::{DateTime, Local, Utc};
 use std::collections::HashMap;
@@ -16,14 +17,14 @@ pub struct SessionBlock {
 #[derive(Debug, Clone)]
 pub struct UsageSnapshot {
     pub all_entries: Vec<UsageEntry>,
-    pub by_session: Option<(String, Vec<UsageEntry>)>,
+    pub by_session: Option<(SessionId, Vec<UsageEntry>)>,
 }
 
 /// Merged snapshot with all session data
 #[derive(Debug)]
 pub struct MergedUsageSnapshot {
     pub all_entries: Vec<UsageEntry>,
-    pub by_session: HashMap<String, Vec<UsageEntry>>,
+    pub by_session: HashMap<SessionId, Vec<UsageEntry>>,
 }
 
 impl MergedUsageSnapshot {
@@ -33,9 +34,9 @@ impl MergedUsageSnapshot {
         if self.all_entries.is_empty() {
             return &self.all_entries;
         }
-        
+
         let today = Local::now().format("%Y-%m-%d").to_string();
-        
+
         // Binary search to find the first entry of today
         let start_idx = self.all_entries.partition_point(|entry| {
             // Convert entry timestamp to local date
@@ -45,11 +46,11 @@ impl MergedUsageSnapshot {
                 .and_then(|ts| ts.parse::<DateTime<Utc>>().ok())
                 .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d").to_string())
                 .unwrap_or_default();
-            
+
             // Return true if entry_date is before today (to find the partition point)
             entry_date < today
         });
-        
+
         &self.all_entries[start_idx..]
     }
 }

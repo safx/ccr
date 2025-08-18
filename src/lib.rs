@@ -58,7 +58,7 @@ mod tests {
         assert_eq!(entry.cost_usd, Some(0.123));
 
         let message = entry.message.unwrap();
-        assert_eq!(message.id, Some("msg_123".to_string()));
+        assert_eq!(message.id, Some("msg_123".into()));
         assert_eq!(message.model, Some("claude-opus-4-1-20250805".to_string()));
 
         let usage = message.usage.unwrap();
@@ -105,19 +105,21 @@ mod tests {
 
     #[test]
     fn test_create_entry_hash() {
+        use crate::types::{MessageId, RequestId};
+
         // Test basic hash creation
-        let hash1 = create_entry_hash("msg_123", "req_456");
+        let hash1 = create_entry_hash(&MessageId::from("msg_123"), &RequestId::from("req_456"));
         assert_eq!(hash1, "msg_123:req_456");
 
         // Test with different IDs
-        let hash2 = create_entry_hash("msg_789", "req_999");
+        let hash2 = create_entry_hash(&MessageId::from("msg_789"), &RequestId::from("req_999"));
         assert_eq!(hash2, "msg_789:req_999");
 
         // Test uniqueness
         assert_ne!(hash1, hash2);
 
         // Test consistency (same inputs produce same output)
-        let hash3 = create_entry_hash("msg_123", "req_456");
+        let hash3 = create_entry_hash(&MessageId::from("msg_123"), &RequestId::from("req_456"));
         assert_eq!(hash1, hash3);
     }
 
@@ -131,11 +133,11 @@ mod tests {
             model: None,
             cost_usd: Some(0.1),
             message: Some(Message {
-                id: Some("msg_123".to_string()),
+                id: Some("msg_123".into()),
                 model: None,
                 usage: None,
             }),
-            request_id: Some("req_456".to_string()),
+            request_id: Some("req_456".into()),
             message_id: None,
             message_model: None,
             message_usage: None,
@@ -147,11 +149,11 @@ mod tests {
             model: None,
             cost_usd: Some(0.2),
             message: Some(Message {
-                id: Some("msg_123".to_string()),
+                id: Some("msg_123".into()),
                 model: None,
                 usage: None,
             }),
-            request_id: Some("req_456".to_string()),
+            request_id: Some("req_456".into()),
             message_id: None,
             message_model: None,
             message_usage: None,
@@ -163,11 +165,11 @@ mod tests {
             model: None,
             cost_usd: Some(0.3),
             message: Some(Message {
-                id: Some("msg_789".to_string()),
+                id: Some("msg_789".into()),
                 model: None,
                 usage: None,
             }),
-            request_id: Some("req_999".to_string()),
+            request_id: Some("req_999".into()),
             message_id: None,
             message_model: None,
             message_usage: None,

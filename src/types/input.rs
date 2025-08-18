@@ -1,9 +1,10 @@
+use super::ids::SessionId;
 use serde::Deserialize;
 
 // Input structure
 #[derive(Debug, Deserialize)]
 pub struct StatuslineHookJson {
-    pub session_id: String,
+    pub session_id: SessionId,
     pub cwd: String,
     pub transcript_path: String,
     pub model: Model,

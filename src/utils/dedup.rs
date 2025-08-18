@@ -1,10 +1,10 @@
-use crate::types::UsageEntry;
+use crate::types::{MessageId, RequestId, UsageEntry};
 use std::collections::HashSet;
 
 /// Create a unique hash from message_id and request_id
 #[inline]
-pub fn create_entry_hash(message_id: &str, request_id: &str) -> String {
-    format!("{}:{}", message_id, request_id)
+pub fn create_entry_hash(message_id: &MessageId, request_id: &RequestId) -> String {
+    format!("{}:{}", message_id.as_str(), request_id.as_str())
 }
 
 // Duplicate detection function

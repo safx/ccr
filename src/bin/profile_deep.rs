@@ -119,7 +119,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // 8. Actual load_all_data with timing hooks
     println!("\n6. Actual load_all_data:");
     let t7 = Instant::now();
-    let snapshot = ccr::loader::load_all_data(&paths, "test").await?;
+    use ccr::types::SessionId;
+    let snapshot = ccr::loader::load_all_data(&paths, &SessionId::from("test")).await?;
     println!("   Total time: {:?}", t7.elapsed());
     println!("   Entries loaded: {}", snapshot.all_entries.len());
 

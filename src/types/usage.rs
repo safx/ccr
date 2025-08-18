@@ -1,3 +1,4 @@
+use super::ids::{MessageId, RequestId};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -9,10 +10,10 @@ pub struct UsageEntry {
     pub cost_usd: Option<f64>,
     pub message: Option<Message>,
     #[serde(rename = "requestId")]
-    pub request_id: Option<String>,
+    pub request_id: Option<RequestId>,
     // Additional fields for session blocks
     #[serde(skip)]
-    pub message_id: Option<String>,
+    pub message_id: Option<MessageId>,
     #[serde(skip)]
     pub message_model: Option<String>,
     #[serde(skip)]
@@ -21,7 +22,7 @@ pub struct UsageEntry {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Message {
-    pub id: Option<String>,
+    pub id: Option<MessageId>,
     pub model: Option<String>,
     pub usage: Option<Usage>,
 }

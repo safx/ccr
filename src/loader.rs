@@ -7,15 +7,17 @@ use std::sync::{Arc, Mutex};
 use tokio::task;
 
 use crate::pricing::calculate_cost;
-use crate::types::{MergedUsageSnapshot, ModelPricing, TokenUsage, UsageEntry, UsageSnapshot};
+use crate::types::{
+    MergedUsageSnapshot, ModelPricing, SessionId, TokenUsage, UsageEntry, UsageSnapshot,
+};
 use crate::utils::create_entry_hash;
 
 /// Load all data with optimized parallelism
 pub async fn load_all_data(
     claude_paths: &[PathBuf],
-    session_id: &str,
+    session_id: &SessionId,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    let target_session = session_id.to_string();
+    let target_session = session_id.as_str().to_string();
 
     // Use a shared mutex for deduplication across all threads
     let global_hashes = Arc::new(Mutex::new(HashSet::with_capacity(50000)));
@@ -109,7 +111,7 @@ pub async fn load_all_data(
                     }
 
                     let by_session = if !target_session_entries.is_empty() {
-                        Some((target_session, target_session_entries))
+                        Some((SessionId::from(target_session), target_session_entries))
                     } else {
                         None
                     };
@@ -125,7 +127,7 @@ pub async fn load_all_data(
 
     // Merge results from all base paths
     let mut all_entries = Vec::with_capacity(50000);
-    let mut by_session: HashMap<String, Vec<UsageEntry>> = HashMap::new();
+    let mut by_session: HashMap<SessionId, Vec<UsageEntry>> = HashMap::new();
 
     for task in tasks {
         let data = task.await??;
@@ -159,7 +161,7 @@ pub fn calculate_today_cost(
 /// Calculate session cost from usage snapshot
 pub fn calculate_session_cost(
     data: &MergedUsageSnapshot,
-    session_id: &str,
+    session_id: &SessionId,
     pricing_map: &HashMap<&str, ModelPricing>,
 ) -> Option<f64> {
     data.by_session.get(session_id).map(|entries| {
