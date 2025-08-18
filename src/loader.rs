@@ -85,25 +85,38 @@ pub async fn load_all_data(
                         });
                     }
 
-                    // Collect all file paths first
-                    let mut all_files = Vec::new();
-                    for project_entry in fs::read_dir(&projects_path)? {
-                        let project_entry = project_entry?;
-                        if !project_entry.file_type()?.is_dir() {
-                            continue;
-                        }
-
-                        for file_entry in fs::read_dir(project_entry.path())? {
-                            let file_entry = file_entry?;
-                            let file_name = file_entry.file_name();
-                            let file_name_str = file_name.to_string_lossy();
-                            if file_name_str.ends_with(".jsonl") {
-                                let session_from_file =
-                                    file_name_str.trim_end_matches(".jsonl").to_string();
-                                all_files.push((file_entry.path(), session_from_file));
-                            }
-                        }
-                    }
+                    // Collect all file paths in parallel
+                    let project_dirs: Vec<_> = fs::read_dir(&projects_path)?
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                        .collect();
+                    
+                    // Parallel scan of all project directories
+                    let all_files: Vec<_> = project_dirs
+                        .par_iter()
+                        .flat_map(|project_entry| {
+                            fs::read_dir(project_entry.path())
+                                .ok()
+                                .map(|entries| {
+                                    entries
+                                        .filter_map(|entry| entry.ok())
+                                        .filter_map(|file_entry| {
+                                            let file_name = file_entry.file_name();
+                                            let file_name_str = file_name.to_string_lossy();
+                                            if file_name_str.ends_with(".jsonl") {
+                                                let session_from_file = file_name_str
+                                                    .trim_end_matches(".jsonl")
+                                                    .to_string();
+                                                Some((file_entry.path(), session_from_file))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default()
+                        })
+                        .collect();
 
                     // Process all files in parallel with line-level parallelism
                     let results: Vec<_> = all_files
