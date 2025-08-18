@@ -1,3 +1,5 @@
+use crate::types::{MergedUsageSnapshot, ModelPricing, SessionId, UsageEntry, UsageSnapshot};
+use crate::utils::create_entry_hash;
 use rayon::prelude::*;
 use serde_json;
 use std::collections::HashSet;
@@ -5,12 +7,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::task;
-
-use crate::pricing::calculate_cost;
-use crate::types::{
-    MergedUsageSnapshot, ModelPricing, SessionId, TokenUsage, UsageEntry, UsageSnapshot,
-};
-use crate::utils::create_entry_hash;
 
 /// Load all data with optimized parallelism
 pub async fn load_all_data(
@@ -129,10 +125,7 @@ pub fn calculate_today_cost(
     data: &MergedUsageSnapshot,
     pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> f64 {
-    data.today_entries()
-        .par_iter() // Use parallel iterator for cost calculation
-        .map(|entry| calculate_entry_cost(entry, pricing_map))
-        .sum()
+    data.calculate_today_cost(pricing_map)
 }
 
 /// Calculate session cost from usage snapshot
@@ -141,45 +134,5 @@ pub fn calculate_session_cost(
     session_id: &SessionId,
     pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> Option<f64> {
-    let entries = data.entries_by_session(session_id);
-    if entries.is_empty() {
-        None
-    } else {
-        Some(
-            entries
-                .par_iter() // Use parallel iterator for cost calculation
-                .map(|entry| calculate_entry_cost(entry, pricing_map))
-                .sum(),
-        )
-    }
-}
-
-/// Calculate entry cost with pricing map
-fn calculate_entry_cost(
-    entry: &UsageEntry,
-    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
-) -> f64 {
-    if let Some(cost) = entry.cost_usd {
-        return cost;
-    }
-
-    if let Some(message) = &entry.message
-        && let Some(usage) = &message.usage
-    {
-        let model_name = message.model.as_ref().or(entry.model.as_ref());
-
-        if let Some(model_name) = model_name
-            && let Some(pricing) = pricing_map.get(model_name.as_str())
-        {
-            let tokens = TokenUsage {
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                cache_creation_tokens: usage.cache_creation_input_tokens,
-                cache_read_tokens: usage.cache_read_input_tokens,
-            };
-            return calculate_cost(&tokens, pricing);
-        }
-    }
-
-    0.0
+    data.calculate_session_cost(session_id, pricing_map)
 }

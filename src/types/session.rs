@@ -1,3 +1,5 @@
+use crate::pricing::calculate_entry_cost;
+
 use super::ids::SessionId;
 use super::usage::UsageEntry;
 use chrono::{DateTime, Local, Utc};
@@ -52,13 +54,40 @@ impl MergedUsageSnapshot {
         &self.all_entries[start_idx..]
     }
 
-    /// Returns entries for a specific session
-    /// Filters all_entries to find matching session entries
-    /// Note: session_id is always set in production (from the JSONL filename)
-    pub fn entries_by_session(&self, session_id: &SessionId) -> Vec<&UsageEntry> {
-        self.all_entries
-            .iter()
+    /// Calculate today's cost
+    /// Uses today_entries() to get today's data and calculates total cost
+    pub fn calculate_today_cost(
+        &self,
+        pricing_map: &std::collections::HashMap<&str, crate::types::ModelPricing>,
+    ) -> f64 {
+        use rayon::prelude::*;
+
+        self.today_entries()
+            .par_iter()
+            .map(|entry| calculate_entry_cost(entry, pricing_map))
+            .sum()
+    }
+
+    /// Calculate cost for a specific session
+    /// Filters entries by session_id and calculates total cost
+    pub fn calculate_session_cost(
+        &self,
+        session_id: &SessionId,
+        pricing_map: &std::collections::HashMap<&str, crate::types::ModelPricing>,
+    ) -> Option<f64> {
+        use rayon::prelude::*;
+
+        let session_cost: f64 = self
+            .all_entries
+            .par_iter()
             .filter(|entry| entry.session_id == *session_id)
-            .collect()
+            .map(|entry| calculate_entry_cost(entry, pricing_map))
+            .sum();
+
+        if session_cost > 0.0 {
+            Some(session_cost)
+        } else {
+            None
+        }
     }
 }
