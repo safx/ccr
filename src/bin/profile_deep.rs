@@ -102,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             message_id: None,
             message_model: None,
             message_usage: None,
+            session_id: format!("session-{}", i / 10000).into(),
         });
     }
 

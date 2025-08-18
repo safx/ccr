@@ -1,4 +1,4 @@
-use super::ids::{MessageId, RequestId};
+use super::ids::{MessageId, RequestId, SessionId};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -18,6 +18,9 @@ pub struct UsageEntry {
     pub message_model: Option<String>,
     #[serde(skip)]
     pub message_usage: Option<Usage>,
+    // Session ID from the file name (always set after parsing from JSONL)
+    #[serde(skip)]
+    pub session_id: SessionId,
 }
 
 #[derive(Debug, Clone, Deserialize)]

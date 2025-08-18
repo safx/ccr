@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use serde_json;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -15,10 +15,8 @@ use crate::utils::create_entry_hash;
 /// Load all data with optimized parallelism
 pub async fn load_all_data(
     claude_paths: &[PathBuf],
-    session_id: &SessionId,
+    _session_id: &SessionId,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    let target_session = session_id.as_str().to_string();
-
     // Use a shared mutex for deduplication across all threads
     let global_hashes = Arc::new(Mutex::new(HashSet::with_capacity(50000)));
 
@@ -27,7 +25,6 @@ pub async fn load_all_data(
         .map(|base_path| {
             let base_path = base_path.clone();
             let global_hashes = Arc::clone(&global_hashes);
-            let target_session = target_session.clone();
 
             task::spawn_blocking(
                 move || -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
@@ -35,7 +32,6 @@ pub async fn load_all_data(
                     if !projects_path.exists() {
                         return Ok(UsageSnapshot {
                             all_entries: Vec::new(),
-                            by_session: None,
                         });
                     }
 
@@ -66,11 +62,17 @@ pub async fn load_all_data(
                             // Read entire file into memory first for faster parsing
                             match fs::read_to_string(path) {
                                 Ok(contents) => {
-                                    // Parse lines in parallel
+                                    // Parse lines in parallel and set session_id
                                     let entries: Vec<UsageEntry> = contents
                                         .par_lines()
                                         .filter(|line| !line.trim().is_empty())
-                                        .filter_map(|line| serde_json::from_str(line).ok())
+                                        .filter_map(|line| {
+                                            let mut entry: UsageEntry =
+                                                serde_json::from_str(line).ok()?;
+                                            entry.session_id =
+                                                SessionId::from(session_file_id.as_str());
+                                            Some(entry)
+                                        })
                                         .collect();
 
                                     (session_file_id, entries)
@@ -82,9 +84,8 @@ pub async fn load_all_data(
 
                     // Process results with global deduplication
                     let mut all_entries = Vec::with_capacity(50000);
-                    let mut target_session_entries: Vec<UsageEntry> = Vec::new();
 
-                    for (session_file_id, entries) in results {
+                    for (_session_file_id, entries) in results {
                         let mut hashes = global_hashes.lock().unwrap();
                         for entry in entries {
                             // Global deduplication check
@@ -99,27 +100,11 @@ pub async fn load_all_data(
                                 hashes.insert(hash);
                             };
 
-                            // Check if this is the target session
-                            let is_target_session = session_file_id == target_session.as_str();
-
-                            if is_target_session {
-                                target_session_entries.push(entry.clone());
-                            }
-
                             all_entries.push(entry);
                         }
                     }
 
-                    let by_session = if !target_session_entries.is_empty() {
-                        Some((SessionId::from(target_session), target_session_entries))
-                    } else {
-                        None
-                    };
-
-                    Ok(UsageSnapshot {
-                        all_entries,
-                        by_session,
-                    })
+                    Ok(UsageSnapshot { all_entries })
                 },
             )
         })
@@ -127,30 +112,22 @@ pub async fn load_all_data(
 
     // Merge results from all base paths
     let mut all_entries = Vec::with_capacity(50000);
-    let mut by_session: HashMap<SessionId, Vec<UsageEntry>> = HashMap::new();
 
     for task in tasks {
         let data = task.await??;
         all_entries.extend(data.all_entries);
-
-        if let Some((session_id, entries)) = data.by_session {
-            by_session.entry(session_id).or_default().extend(entries);
-        }
     }
 
     // Sort all entries by timestamp once (string sort is sufficient for ISO 8601)
     all_entries.sort_by(|a, b| a.timestamp.as_deref().cmp(&b.timestamp.as_deref()));
 
-    Ok(MergedUsageSnapshot {
-        all_entries,
-        by_session,
-    })
+    Ok(MergedUsageSnapshot { all_entries })
 }
 
 /// Calculate today's cost from usage snapshot
 pub fn calculate_today_cost(
     data: &MergedUsageSnapshot,
-    pricing_map: &HashMap<&str, ModelPricing>,
+    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> f64 {
     data.today_entries()
         .par_iter() // Use parallel iterator for cost calculation
@@ -162,18 +139,26 @@ pub fn calculate_today_cost(
 pub fn calculate_session_cost(
     data: &MergedUsageSnapshot,
     session_id: &SessionId,
-    pricing_map: &HashMap<&str, ModelPricing>,
+    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> Option<f64> {
-    data.by_session.get(session_id).map(|entries| {
-        entries
-            .par_iter() // Use parallel iterator for cost calculation
-            .map(|entry| calculate_entry_cost(entry, pricing_map))
-            .sum()
-    })
+    let entries = data.entries_by_session(session_id);
+    if entries.is_empty() {
+        None
+    } else {
+        Some(
+            entries
+                .par_iter() // Use parallel iterator for cost calculation
+                .map(|entry| calculate_entry_cost(entry, pricing_map))
+                .sum(),
+        )
+    }
 }
 
 /// Calculate entry cost with pricing map
-fn calculate_entry_cost(entry: &UsageEntry, pricing_map: &HashMap<&str, ModelPricing>) -> f64 {
+fn calculate_entry_cost(
+    entry: &UsageEntry,
+    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
+) -> f64 {
     if let Some(cost) = entry.cost_usd {
         return cost;
     }

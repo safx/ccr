@@ -1,7 +1,6 @@
 use super::ids::SessionId;
 use super::usage::UsageEntry;
 use chrono::{DateTime, Local, Utc};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct SessionBlock {
@@ -17,14 +16,12 @@ pub struct SessionBlock {
 #[derive(Debug, Clone)]
 pub struct UsageSnapshot {
     pub all_entries: Vec<UsageEntry>,
-    pub by_session: Option<(SessionId, Vec<UsageEntry>)>,
 }
 
 /// Merged snapshot with all session data
 #[derive(Debug)]
 pub struct MergedUsageSnapshot {
     pub all_entries: Vec<UsageEntry>,
-    pub by_session: HashMap<SessionId, Vec<UsageEntry>>,
 }
 
 impl MergedUsageSnapshot {
@@ -49,13 +46,19 @@ impl MergedUsageSnapshot {
         // Binary search to find the first entry of today
         // Since timestamps are ISO 8601 strings, we can compare them directly
         let start_idx = self.all_entries.partition_point(|entry| {
-            entry
-                .timestamp
-                .as_deref()
-                .unwrap_or("")
-                < today_start.as_str()
+            entry.timestamp.as_deref().unwrap_or("") < today_start.as_str()
         });
 
         &self.all_entries[start_idx..]
+    }
+
+    /// Returns entries for a specific session
+    /// Filters all_entries to find matching session entries
+    /// Note: session_id is always set in production (from the JSONL filename)
+    pub fn entries_by_session(&self, session_id: &SessionId) -> Vec<&UsageEntry> {
+        self.all_entries
+            .iter()
+            .filter(|entry| entry.session_id == *session_id)
+            .collect()
     }
 }

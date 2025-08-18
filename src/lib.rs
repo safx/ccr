@@ -141,6 +141,7 @@ mod tests {
             message_id: None,
             message_model: None,
             message_usage: None,
+            session_id: "session-1".into(),
         };
 
         // Same message and request IDs (duplicate)
@@ -157,6 +158,7 @@ mod tests {
             message_id: None,
             message_model: None,
             message_usage: None,
+            session_id: "session-2".into(),
         };
 
         // Different IDs (not a duplicate)
@@ -173,6 +175,7 @@ mod tests {
             message_id: None,
             message_model: None,
             message_usage: None,
+            session_id: "session-3".into(),
         };
 
         // Test duplicate detection
