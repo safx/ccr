@@ -1,4 +1,5 @@
 use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry, UsageSnapshot};
+use chrono::{Duration, Local, Utc};
 use rayon::prelude::*;
 use serde_json;
 use std::collections::HashSet;
@@ -7,20 +8,73 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::task;
 
-/// Load all data with optimized parallelism
+/// Determines if an entry should be kept based on filtering criteria
+/// Used for early filtering to reduce memory usage
+fn should_keep_entry(
+    entry: &UsageEntry,
+    current_session_id: &SessionId,
+    cutoff_timestamp: &str,
+) -> bool {
+    // Always keep entries from the current session
+    if entry.session_id == *current_session_id {
+        return true;
+    }
+
+    // Keep entries after the cutoff timestamp
+    // (today's entries or last 6 hours, whichever is earlier)
+    if let Some(timestamp) = &entry.timestamp {
+        timestamp.as_str() >= cutoff_timestamp
+    } else {
+        // Keep entries without timestamps (edge case)
+        true
+    }
+}
+
+/// Load all data with optimized parallelism and early filtering
 pub async fn load_all_data(
     claude_paths: &[PathBuf],
-    _session_id: &SessionId,
+    session_id: &SessionId,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
     // Use a shared mutex for deduplication across all threads
     let global_hashes: Arc<Mutex<HashSet<UniqueHash>>> =
         Arc::new(Mutex::new(HashSet::with_capacity(50000)));
+
+    // Calculate filter boundaries
+    // Today's start (in UTC for comparison with timestamps)
+    let today_start = Local::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_local_timezone(Local)
+        .unwrap()
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    // Six hours ago (for session blocks - ensures we get the current block)
+    // This is important for burn rate calculation
+    let six_hours_ago = Utc::now()
+        .checked_sub_signed(Duration::hours(6))
+        .unwrap()
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    // Use the earlier of today_start or six_hours_ago as the cutoff
+    // This ensures we capture all necessary data for both "today" stats and "current block"
+    let cutoff_timestamp = if today_start < six_hours_ago {
+        today_start
+    } else {
+        six_hours_ago
+    };
+
+    // Current session ID for filtering
+    let current_session_id = session_id.clone();
 
     let tasks: Vec<_> = claude_paths
         .iter()
         .map(|base_path| {
             let base_path = base_path.clone();
             let global_hashes = Arc::clone(&global_hashes);
+            let cutoff_timestamp = cutoff_timestamp.clone();
+            let current_session_id = current_session_id.clone();
 
             task::spawn_blocking(
                 move || -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
@@ -67,7 +121,17 @@ pub async fn load_all_data(
                                                 serde_json::from_str(line).ok()?;
                                             entry.session_id =
                                                 SessionId::from(session_file_id.as_str());
-                                            Some(entry)
+
+                                            // Apply early filtering
+                                            if should_keep_entry(
+                                                &entry,
+                                                &current_session_id,
+                                                &cutoff_timestamp,
+                                            ) {
+                                                Some(entry)
+                                            } else {
+                                                None
+                                            }
                                         })
                                         .collect();
 
