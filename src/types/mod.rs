@@ -4,7 +4,7 @@ pub mod pricing;
 pub mod session;
 pub mod usage;
 
-pub use ids::{MessageId, RequestId, SessionId};
+pub use ids::{MessageId, RequestId, SessionId, UniqueHash};
 pub use input::{
     Model, StatuslineHookJson, TranscriptMessage, TranscriptMessageContent, TranscriptUsage,
 };

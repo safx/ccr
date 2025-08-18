@@ -1,5 +1,6 @@
-use crate::types::{MergedUsageSnapshot, ModelPricing, SessionId, UsageEntry, UsageSnapshot};
-use crate::utils::create_entry_hash;
+use crate::types::{
+    MergedUsageSnapshot, ModelPricing, SessionId, UniqueHash, UsageEntry, UsageSnapshot,
+};
 use rayon::prelude::*;
 use serde_json;
 use std::collections::HashSet;
@@ -14,7 +15,8 @@ pub async fn load_all_data(
     _session_id: &SessionId,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
     // Use a shared mutex for deduplication across all threads
-    let global_hashes = Arc::new(Mutex::new(HashSet::with_capacity(50000)));
+    let global_hashes: Arc<Mutex<HashSet<UniqueHash>>> =
+        Arc::new(Mutex::new(HashSet::with_capacity(50000)));
 
     let tasks: Vec<_> = claude_paths
         .iter()
@@ -79,7 +81,7 @@ pub async fn load_all_data(
                         .collect();
 
                     // Process results with global deduplication
-                    let mut all_entries = Vec::with_capacity(50000);
+                    let mut all_entries = Vec::with_capacity(10000);
 
                     for (_session_file_id, entries) in results {
                         let mut hashes = global_hashes.lock().unwrap();
@@ -89,7 +91,7 @@ pub async fn load_all_data(
                                 && let (Some(msg_id), Some(req_id)) =
                                     (&message.id, &entry.request_id)
                             {
-                                let hash = create_entry_hash(msg_id, req_id);
+                                let hash = UniqueHash::from((msg_id, req_id));
                                 if hashes.contains(&hash) {
                                     continue;
                                 }

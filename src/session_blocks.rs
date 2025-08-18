@@ -1,6 +1,5 @@
 use crate::pricing::calculate_cost;
-use crate::types::{ModelPricing, SessionBlock, TokenUsage, UsageEntry};
-use crate::utils::create_entry_hash;
+use crate::types::{ModelPricing, SessionBlock, TokenUsage, UniqueHash, UsageEntry};
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
 
@@ -28,7 +27,7 @@ pub fn identify_session_blocks(
     let now = Local::now().with_timezone(&Utc);
     let five_hours = Duration::hours(5);
     let mut blocks = Vec::new();
-    let mut processed_hashes = HashSet::new();
+    let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
 
     let mut current_block_start: Option<DateTime<Utc>> = None;
     let mut current_block_entries: Vec<UsageEntry> = Vec::new();
@@ -50,7 +49,7 @@ pub fn identify_session_blocks(
         if let Some(message) = &entry.message
             && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.request_id)
         {
-            let hash = create_entry_hash(msg_id, req_id);
+            let hash = UniqueHash::from((msg_id, req_id));
             if processed_hashes.contains(&hash) {
                 continue;
             }

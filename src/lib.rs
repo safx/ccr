@@ -10,9 +10,8 @@ pub mod utils;
 pub use pricing::{MODEL_PRICING, calculate_cost};
 pub use types::{
     MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
-    Usage, UsageEntry, UsageSnapshot,
+    UniqueHash, Usage, UsageEntry, UsageSnapshot,
 };
-pub use utils::create_entry_hash;
 
 #[cfg(test)]
 mod tests {
@@ -104,31 +103,35 @@ mod tests {
     }
 
     #[test]
-    fn test_create_entry_hash() {
-        use crate::types::{MessageId, RequestId};
+    fn test_unique_hash() {
+        use crate::types::{MessageId, RequestId, UniqueHash};
 
         // Test basic hash creation
-        let hash1 = create_entry_hash(&MessageId::from("msg_123"), &RequestId::from("req_456"));
-        assert_eq!(hash1, "msg_123:req_456");
+        let msg_id1 = MessageId::from("msg_123");
+        let req_id1 = RequestId::from("req_456");
+        let hash1 = UniqueHash::from((&msg_id1, &req_id1));
+        assert_eq!(hash1.as_str(), "msg_123:req_456");
 
         // Test with different IDs
-        let hash2 = create_entry_hash(&MessageId::from("msg_789"), &RequestId::from("req_999"));
-        assert_eq!(hash2, "msg_789:req_999");
+        let msg_id2 = MessageId::from("msg_789");
+        let req_id2 = RequestId::from("req_999");
+        let hash2 = UniqueHash::from((&msg_id2, &req_id2));
+        assert_eq!(hash2.as_str(), "msg_789:req_999");
 
         // Test uniqueness
         assert_ne!(hash1, hash2);
 
         // Test consistency (same inputs produce same output)
-        let hash3 = create_entry_hash(&MessageId::from("msg_123"), &RequestId::from("req_456"));
+        let hash3 = UniqueHash::from((&msg_id1, &req_id1));
         assert_eq!(hash1, hash3);
     }
 
     // Helper function for testing duplicate detection
-    fn is_duplicate(entry: &UsageEntry, processed_hashes: &mut HashSet<String>) -> bool {
+    fn is_duplicate(entry: &UsageEntry, processed_hashes: &mut HashSet<UniqueHash>) -> bool {
         if let (Some(message), Some(request_id)) = (&entry.message, &entry.request_id)
             && let Some(message_id) = &message.id
         {
-            let unique_hash = create_entry_hash(message_id, request_id);
+            let unique_hash = UniqueHash::from((message_id, request_id));
             if processed_hashes.contains(&unique_hash) {
                 return true;
             }
@@ -139,7 +142,8 @@ mod tests {
 
     #[test]
     fn test_duplicate_detection() {
-        let mut processed_hashes = HashSet::new();
+        use crate::types::UniqueHash;
+        let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
 
         // First entry
         let entry1 = UsageEntry {

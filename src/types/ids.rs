@@ -1,6 +1,29 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// NewType wrapper for unique hash of message_id and request_id
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UniqueHash(String);
+
+impl UniqueHash {
+    /// Get the inner string value
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<(&MessageId, &RequestId)> for UniqueHash {
+    fn from((message_id, request_id): (&MessageId, &RequestId)) -> Self {
+        Self(format!("{}:{}", message_id.as_str(), request_id.as_str()))
+    }
+}
+
+impl fmt::Display for UniqueHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// NewType wrapper for Session ID
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, Default)]
 #[serde(transparent)]
