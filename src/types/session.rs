@@ -35,20 +35,25 @@ impl MergedUsageSnapshot {
             return &self.all_entries;
         }
 
-        let today = Local::now().format("%Y-%m-%d").to_string();
+        // Get today's start in the same format as UsageEntry.timestamp (ISO 8601 UTC)
+        // This accounts for timezone differences
+        let today_start = Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
         // Binary search to find the first entry of today
+        // Since timestamps are ISO 8601 strings, we can compare them directly
         let start_idx = self.all_entries.partition_point(|entry| {
-            // Convert entry timestamp to local date
-            let entry_date = entry
+            entry
                 .timestamp
-                .as_ref()
-                .and_then(|ts| ts.parse::<DateTime<Utc>>().ok())
-                .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d").to_string())
-                .unwrap_or_default();
-
-            // Return true if entry_date is before today (to find the partition point)
-            entry_date < today
+                .as_deref()
+                .unwrap_or("")
+                < today_start.as_str()
         });
 
         &self.all_entries[start_idx..]
