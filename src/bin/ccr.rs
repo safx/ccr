@@ -1,7 +1,7 @@
 use chrono::{Local, Utc};
 use colored::*;
 use std::error::Error;
-use std::io::{self, Read};
+use std::io;
 use std::path::Path;
 
 // Import from organized modules
@@ -27,10 +27,8 @@ async fn main() -> Result<()> {
     // Force colored output even when not in a TTY
     colored::control::set_override(true);
 
-    // Read input JSON from stdin
-    let mut buffer = String::new();
-    io::stdin().read_to_string(&mut buffer)?;
-    let hook_data: StatuslineHookJson = serde_json::from_str(&buffer)?;
+    // Read input JSON directly from stdin using stream processing
+    let hook_data: StatuslineHookJson = serde_json::from_reader(io::stdin())?;
 
     // Check Claude paths exist
     let claude_paths = get_claude_paths();

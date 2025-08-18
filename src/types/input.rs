@@ -7,14 +7,30 @@ pub struct StatuslineHookJson {
     pub cwd: String,
     pub transcript_path: String,
     pub model: Model,
+    #[serde(default)]
+    pub workspace: Option<Workspace>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub output_style: Option<OutputStyle>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Model {
-    #[serde(alias = "_id")]
     #[allow(dead_code)]
     pub id: Option<String>,
     pub display_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Workspace {
+    pub current_dir: String,
+    pub project_dir: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OutputStyle {
+    pub name: String,
 }
 
 // Transcript message structure for parsing JSONL
