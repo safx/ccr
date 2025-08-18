@@ -1,6 +1,4 @@
-use crate::types::{
-    MergedUsageSnapshot, ModelPricing, SessionId, UniqueHash, UsageEntry, UsageSnapshot,
-};
+use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry, UsageSnapshot};
 use rayon::prelude::*;
 use serde_json;
 use std::collections::HashSet;
@@ -120,21 +118,4 @@ pub async fn load_all_data(
     all_entries.sort_by(|a, b| a.timestamp.as_deref().cmp(&b.timestamp.as_deref()));
 
     Ok(MergedUsageSnapshot { all_entries })
-}
-
-/// Calculate today's cost from usage snapshot
-pub fn calculate_today_cost(
-    data: &MergedUsageSnapshot,
-    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
-) -> f64 {
-    data.calculate_today_cost(pricing_map)
-}
-
-/// Calculate session cost from usage snapshot
-pub fn calculate_session_cost(
-    data: &MergedUsageSnapshot,
-    session_id: &SessionId,
-    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
-) -> Option<f64> {
-    data.calculate_session_cost(session_id, pricing_map)
 }
