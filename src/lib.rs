@@ -10,7 +10,7 @@ pub mod utils;
 pub use pricing::{MODEL_PRICING, calculate_cost};
 pub use types::{
     MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
-    UniqueHash, Usage, UsageEntry, UsageSnapshot,
+    UniqueHash, Usage, UsageEntry,
 };
 
 #[cfg(test)]

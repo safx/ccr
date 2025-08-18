@@ -1,4 +1,4 @@
-use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry, UsageSnapshot};
+use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry};
 use chrono::{Duration, Local, Utc};
 use rayon::prelude::*;
 use serde_json;
@@ -77,12 +77,10 @@ pub async fn load_all_data(
             let current_session_id = current_session_id.clone();
 
             task::spawn_blocking(
-                move || -> Result<UsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
+                move || -> Result<Vec<UsageEntry>, Box<dyn std::error::Error + Send + Sync>> {
                     let projects_path = base_path.join("projects");
                     if !projects_path.exists() {
-                        return Ok(UsageSnapshot {
-                            all_entries: Vec::new(),
-                        });
+                        return Ok(Vec::new());
                     }
 
                     // Collect all file paths in parallel
@@ -90,7 +88,7 @@ pub async fn load_all_data(
                         .filter_map(|entry| entry.ok())
                         .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
                         .collect();
-                    
+
                     // Parallel scan of all project directories
                     let all_files: Vec<_> = project_dirs
                         .par_iter()
@@ -148,17 +146,17 @@ pub async fn load_all_data(
                                         })
                                         .collect();
 
-                                    (session_file_id, entries)
+                                    entries
                                 }
-                                Err(_) => (session_file_id, Vec::new()),
+                                Err(_) => Vec::new(),
                             }
                         })
                         .collect();
 
                     // Process results with global deduplication
-                    let mut all_entries = Vec::with_capacity(10000);
+                    let mut all_entries = Vec::with_capacity(50);
 
-                    for (_session_file_id, entries) in results {
+                    for entries in results {
                         let mut hashes = global_hashes.lock().unwrap();
                         for entry in entries {
                             // Global deduplication check
@@ -177,7 +175,7 @@ pub async fn load_all_data(
                         }
                     }
 
-                    Ok(UsageSnapshot { all_entries })
+                    Ok(all_entries)
                 },
             )
         })
@@ -188,7 +186,7 @@ pub async fn load_all_data(
 
     for task in tasks {
         let data = task.await??;
-        all_entries.extend(data.all_entries);
+        all_entries.extend(data);
     }
 
     // Sort all entries by timestamp once (string sort is sufficient for ISO 8601)

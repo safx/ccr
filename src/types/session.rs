@@ -14,12 +14,6 @@ pub struct SessionBlock {
     pub is_gap: bool,
 }
 
-/// Snapshot of usage data at a point in time
-#[derive(Debug, Clone)]
-pub struct UsageSnapshot {
-    pub all_entries: Vec<UsageEntry>,
-}
-
 /// Merged snapshot with all session data
 #[derive(Debug)]
 pub struct MergedUsageSnapshot {
