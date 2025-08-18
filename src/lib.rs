@@ -12,7 +12,7 @@ pub use types::{
     MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
     Usage, UsageEntry, UsageSnapshot,
 };
-pub use utils::{create_entry_hash, is_duplicate};
+pub use utils::create_entry_hash;
 
 #[cfg(test)]
 mod tests {
@@ -121,6 +121,20 @@ mod tests {
         // Test consistency (same inputs produce same output)
         let hash3 = create_entry_hash(&MessageId::from("msg_123"), &RequestId::from("req_456"));
         assert_eq!(hash1, hash3);
+    }
+
+    // Helper function for testing duplicate detection
+    fn is_duplicate(entry: &UsageEntry, processed_hashes: &mut HashSet<String>) -> bool {
+        if let (Some(message), Some(request_id)) = (&entry.message, &entry.request_id)
+            && let Some(message_id) = &message.id
+        {
+            let unique_hash = create_entry_hash(message_id, request_id);
+            if processed_hashes.contains(&unique_hash) {
+                return true;
+            }
+            processed_hashes.insert(unique_hash);
+        }
+        false
     }
 
     #[test]
