@@ -1,9 +1,10 @@
 use super::ids::{MessageId, ModelId, RequestId, SessionId};
 use serde::Deserialize;
 
+// Pure data structure deserialized from JSON
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UsageEntry {
+pub struct UsageEntryData {
     pub timestamp: Option<String>,
     pub model: Option<ModelId>,
     #[serde(rename = "costUSD")]
@@ -11,10 +12,19 @@ pub struct UsageEntry {
     pub message: Option<Message>,
     #[serde(rename = "requestId")]
     pub request_id: Option<RequestId>,
+}
 
-    // Session ID from the file name (always set after parsing from JSONL)
-    #[serde(skip)]
+// Complete usage entry with session context
+#[derive(Debug, Clone)]
+pub struct UsageEntry {
+    pub data: UsageEntryData,
     pub session_id: SessionId,
+}
+
+impl UsageEntry {
+    pub fn from_data(data: UsageEntryData, session_id: SessionId) -> Self {
+        Self { data, session_id }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

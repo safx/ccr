@@ -35,6 +35,7 @@ pub fn identify_session_blocks(
     for entry in sorted_entries.iter() {
         // Parse timestamp
         let Some(entry_time) = entry
+            .data
             .timestamp
             .as_ref()
             .and_then(|t| t.parse::<DateTime<Utc>>().ok())
@@ -43,8 +44,8 @@ pub fn identify_session_blocks(
         };
 
         // Check for duplicate (only when BOTH IDs exist)
-        if let Some(message) = &entry.message
-            && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.request_id)
+        if let Some(message) = &entry.data.message
+            && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.data.request_id)
         {
             let hash = UniqueHash::from((msg_id, req_id));
             if processed_hashes.contains(&hash) {
@@ -54,11 +55,11 @@ pub fn identify_session_blocks(
         }
 
         // Calculate entry cost (prefer costUSD, fallback to calculating from tokens)
-        let entry_cost = if let Some(cost) = entry.cost_usd {
+        let entry_cost = if let Some(cost) = entry.data.cost_usd {
             cost
-        } else if let Some(message) = &entry.message
+        } else if let Some(message) = &entry.data.message
             && let Some(usage) = &message.usage
-            && let Some(model_id) = message.model.as_ref().or(entry.model.as_ref())
+            && let Some(model_id) = message.model.as_ref().or(entry.data.model.as_ref())
         {
             let pricing = ModelPricing::from(model_id);
             let tokens = TokenUsage {
@@ -173,10 +174,12 @@ pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
     let last_entry = block.entries.last()?;
 
     let first_time = first_entry
+        .data
         .timestamp
         .as_ref()
         .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
     let last_time = last_entry
+        .data
         .timestamp
         .as_ref()
         .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;

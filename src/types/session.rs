@@ -42,7 +42,7 @@ impl MergedUsageSnapshot {
         // Binary search to find the first entry of today
         // Since timestamps are ISO 8601 strings, we can compare them directly
         let start_idx = self.all_entries.partition_point(|entry| {
-            entry.timestamp.as_deref().unwrap_or("") < today_start.as_str()
+            entry.data.timestamp.as_deref().unwrap_or("") < today_start.as_str()
         });
 
         &self.all_entries[start_idx..]

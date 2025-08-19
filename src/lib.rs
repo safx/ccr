@@ -10,7 +10,7 @@ pub mod utils;
 pub use types::ids::ModelId;
 pub use types::{
     MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
-    UniqueHash, Usage, UsageEntry,
+    UniqueHash, Usage, UsageEntry, UsageEntryData,
 };
 
 #[cfg(test)]
@@ -50,13 +50,14 @@ mod tests {
             "requestId": "req_456"
         }"#;
 
-        let entry: UsageEntry = serde_json::from_str(json_str).unwrap();
+        let data: UsageEntryData = serde_json::from_str(json_str).unwrap();
+        let entry = UsageEntry::from_data(data, "test-session".into());
 
-        assert_eq!(entry.timestamp, Some("2024-01-15T10:30:00Z".to_string()));
-        assert_eq!(entry.model, Some(ModelId::ClaudeOpus4_1_20250805));
-        assert_eq!(entry.cost_usd, Some(0.123));
+        assert_eq!(entry.data.timestamp, Some("2024-01-15T10:30:00Z".to_string()));
+        assert_eq!(entry.data.model, Some(ModelId::ClaudeOpus4_1_20250805));
+        assert_eq!(entry.data.cost_usd, Some(0.123));
 
-        let message = entry.message.unwrap();
+        let message = entry.data.message.unwrap();
         assert_eq!(message.id, Some("msg_123".into()));
         assert_eq!(message.model, Some(ModelId::ClaudeOpus4_1_20250805));
 
@@ -93,7 +94,7 @@ mod tests {
 
     // Helper function for testing duplicate detection
     fn is_duplicate(entry: &UsageEntry, processed_hashes: &mut HashSet<UniqueHash>) -> bool {
-        if let (Some(message), Some(request_id)) = (&entry.message, &entry.request_id)
+        if let (Some(message), Some(request_id)) = (&entry.data.message, &entry.data.request_id)
             && let Some(message_id) = &message.id
         {
             let unique_hash = UniqueHash::from((message_id, request_id));
@@ -111,46 +112,52 @@ mod tests {
         let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
 
         // First entry
-        let entry1 = UsageEntry {
-            timestamp: Some("2024-01-15T10:30:00Z".to_string()),
-            model: None,
-            cost_usd: Some(0.1),
-            message: Some(Message {
-                id: Some("msg_123".into()),
+        let entry1 = UsageEntry::from_data(
+            UsageEntryData {
+                timestamp: Some("2024-01-15T10:30:00Z".to_string()),
                 model: None,
-                usage: None,
-            }),
-            request_id: Some("req_456".into()),
-            session_id: "session-1".into(),
-        };
+                cost_usd: Some(0.1),
+                message: Some(Message {
+                    id: Some("msg_123".into()),
+                    model: None,
+                    usage: None,
+                }),
+                request_id: Some("req_456".into()),
+            },
+            "session-1".into(),
+        );
 
         // Same message and request IDs (duplicate)
-        let entry2 = UsageEntry {
-            timestamp: Some("2024-01-15T10:30:01Z".to_string()),
-            model: None,
-            cost_usd: Some(0.2),
-            message: Some(Message {
-                id: Some("msg_123".into()),
+        let entry2 = UsageEntry::from_data(
+            UsageEntryData {
+                timestamp: Some("2024-01-15T10:30:01Z".to_string()),
                 model: None,
-                usage: None,
-            }),
-            request_id: Some("req_456".into()),
-            session_id: "session-2".into(),
-        };
+                cost_usd: Some(0.2),
+                message: Some(Message {
+                    id: Some("msg_123".into()),
+                    model: None,
+                    usage: None,
+                }),
+                request_id: Some("req_456".into()),
+            },
+            "session-2".into(),
+        );
 
         // Different IDs (not a duplicate)
-        let entry3 = UsageEntry {
-            timestamp: Some("2024-01-15T10:30:02Z".to_string()),
-            model: None,
-            cost_usd: Some(0.3),
-            message: Some(Message {
-                id: Some("msg_789".into()),
+        let entry3 = UsageEntry::from_data(
+            UsageEntryData {
+                timestamp: Some("2024-01-15T10:30:02Z".to_string()),
                 model: None,
-                usage: None,
-            }),
-            request_id: Some("req_999".into()),
-            session_id: "session-3".into(),
-        };
+                cost_usd: Some(0.3),
+                message: Some(Message {
+                    id: Some("msg_789".into()),
+                    model: None,
+                    usage: None,
+                }),
+                request_id: Some("req_999".into()),
+            },
+            "session-3".into(),
+        );
 
         // Test duplicate detection
         assert!(!is_duplicate(&entry1, &mut processed_hashes));

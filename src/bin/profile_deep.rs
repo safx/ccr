@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let t4 = Instant::now();
     for _ in 0..100_000 {
-        let _: ccr::types::UsageEntry = serde_json::from_str(sample_json)?;
+        let _: ccr::types::UsageEntryData = serde_json::from_str(sample_json)?;
     }
     println!("   Parse 100k entries: {:?}", t4.elapsed());
 
@@ -88,23 +88,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("\n4. Sorting Analysis:");
     let mut test_entries = Vec::with_capacity(100_000);
     for i in 0..100_000 {
-        test_entries.push(ccr::types::UsageEntry {
-            timestamp: Some(format!(
-                "2024-01-01T{:02}:{:02}:{:02}Z",
-                i / 3600,
-                (i / 60) % 60,
-                i % 60
-            )),
-            model: None,
-            cost_usd: None,
-            message: None,
-            request_id: None,
-            session_id: format!("session-{}", i / 10000).into(),
-        });
+        test_entries.push(ccr::types::UsageEntry::from_data(
+            ccr::types::UsageEntryData {
+                timestamp: Some(format!(
+                    "2024-01-01T{:02}:{:02}:{:02}Z",
+                    i / 3600,
+                    (i / 60) % 60,
+                    i % 60
+                )),
+                model: None,
+                cost_usd: None,
+                message: None,
+                request_id: None,
+            },
+            format!("session-{}", i / 10000).into(),
+        ));
     }
 
     let t6 = Instant::now();
-    test_entries.sort_by(|a, b| a.timestamp.as_deref().cmp(&b.timestamp.as_deref()));
+    test_entries.sort_by(|a, b| a.data.timestamp.as_deref().cmp(&b.data.timestamp.as_deref()));
     println!("   Sort 100k entries: {:?}", t6.elapsed());
 
     // 7. Memory allocation patterns

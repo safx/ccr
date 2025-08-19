@@ -1,4 +1,4 @@
-use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry};
+use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry, UsageEntryData};
 use chrono::{Duration, Local, Utc};
 use rayon::prelude::*;
 use serde_json;
@@ -22,7 +22,7 @@ fn should_keep_entry(
 
     // Keep entries after the cutoff timestamp
     // (today's entries or last 6 hours, whichever is earlier)
-    if let Some(timestamp) = &entry.timestamp {
+    if let Some(timestamp) = &entry.data.timestamp {
         timestamp.as_str() >= cutoff_timestamp
     } else {
         // Keep entries without timestamps (edge case)
@@ -128,10 +128,12 @@ pub async fn load_all_data(
                                         .par_lines()
                                         .filter(|line| !line.trim().is_empty())
                                         .filter_map(|line| {
-                                            let mut entry: UsageEntry =
+                                            let data: UsageEntryData =
                                                 serde_json::from_str(line).ok()?;
-                                            entry.session_id =
-                                                SessionId::from(session_file_id.as_str());
+                                            let entry = UsageEntry::from_data(
+                                                data,
+                                                SessionId::from(session_file_id.as_str()),
+                                            );
 
                                             // Apply early filtering
                                             if should_keep_entry(
@@ -160,9 +162,9 @@ pub async fn load_all_data(
                         let mut hashes = global_hashes.lock().unwrap();
                         for entry in entries {
                             // Global deduplication check
-                            if let Some(message) = &entry.message
+                            if let Some(message) = &entry.data.message
                                 && let (Some(msg_id), Some(req_id)) =
-                                    (&message.id, &entry.request_id)
+                                    (&message.id, &entry.data.request_id)
                             {
                                 let hash = UniqueHash::from((msg_id, req_id));
                                 if hashes.contains(&hash) {
@@ -190,7 +192,7 @@ pub async fn load_all_data(
     }
 
     // Sort all entries by timestamp once (string sort is sufficient for ISO 8601)
-    all_entries.sort_by(|a, b| a.timestamp.as_deref().cmp(&b.timestamp.as_deref()));
+    all_entries.sort_by(|a, b| a.data.timestamp.as_deref().cmp(&b.data.timestamp.as_deref()));
 
     Ok(MergedUsageSnapshot { all_entries })
 }

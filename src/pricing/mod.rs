@@ -10,13 +10,13 @@ fn calculate_cost(tokens: &TokenUsage, pricing: &ModelPricing) -> f64 {
 
 /// Calculate entry cost with pricing map
 pub fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
-    if let Some(cost) = entry.cost_usd {
+    if let Some(cost) = entry.data.cost_usd {
         return cost;
     }
 
-    if let Some(message) = &entry.message
+    if let Some(message) = &entry.data.message
         && let Some(usage) = &message.usage
-        && let Some(model_id) = message.model.as_ref().or(entry.model.as_ref())
+        && let Some(model_id) = message.model.as_ref().or(entry.data.model.as_ref())
     {
         let pricing = ModelPricing::from(model_id);
         let tokens = TokenUsage {

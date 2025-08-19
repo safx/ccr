@@ -10,4 +10,4 @@ pub use input::{
 };
 pub use pricing::{ModelPricing, TokenUsage};
 pub use session::{MergedUsageSnapshot, SessionBlock};
-pub use usage::{Message, Usage, UsageEntry};
+pub use usage::{Message, Usage, UsageEntry, UsageEntryData};
