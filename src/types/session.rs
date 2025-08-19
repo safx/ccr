@@ -2,22 +2,70 @@ use crate::pricing::calculate_entry_cost;
 
 use super::ids::SessionId;
 use super::usage::UsageEntry;
-use chrono::{DateTime, Local, Utc};
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SessionBlockType {
-    Completed, // Completed session block
-    Active,    // Currently active session block
-    Idle,      // Idle period between sessions
-}
+use chrono::{DateTime, Duration, Local, Utc};
 
 #[derive(Debug, Clone)]
-pub struct SessionBlock {
-    pub block_type: SessionBlockType,
-    pub start_time: DateTime<Utc>,
-    pub end_time: DateTime<Utc>,
-    pub cost_usd: f64,
-    pub entries: Vec<UsageEntry>,
+pub enum SessionBlock {
+    /// Idle period between sessions
+    Idle {
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+    },
+
+    /// Currently active session (within 5 hours)
+    Active {
+        start_time: DateTime<Utc>,
+        cost_usd: f64,
+        entries: Vec<UsageEntry>,
+    },
+
+    /// Completed past session
+    Completed {
+        start_time: DateTime<Utc>,
+        cost_usd: f64,
+        entries: Vec<UsageEntry>,
+    },
+}
+
+impl SessionBlock {
+    const BLOCK_DURATION: Duration = Duration::hours(5);
+
+    #[inline(always)]
+    pub fn end_time(&self) -> DateTime<Utc> {
+        match self {
+            SessionBlock::Idle { end_time, .. } => *end_time,
+            SessionBlock::Active { start_time, .. } => *start_time + Self::BLOCK_DURATION,
+            SessionBlock::Completed { start_time, .. } => *start_time + Self::BLOCK_DURATION,
+        }
+    }
+
+    #[inline(always)]
+    pub fn cost_usd(&self) -> f64 {
+        match self {
+            SessionBlock::Idle { .. } => 0.0,
+            SessionBlock::Active { cost_usd, .. } => *cost_usd,
+            SessionBlock::Completed { cost_usd, .. } => *cost_usd,
+        }
+    }
+
+    #[inline(always)]
+    pub fn entries(&self) -> &[UsageEntry] {
+        match self {
+            SessionBlock::Idle { .. } => &[],
+            SessionBlock::Active { entries, .. } => entries,
+            SessionBlock::Completed { entries, .. } => entries,
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_idle(&self) -> bool {
+        matches!(self, SessionBlock::Idle { .. })
+    }
+
+    #[inline(always)]
+    pub fn is_active(&self) -> bool {
+        matches!(self, SessionBlock::Active { .. })
+    }
 }
 
 /// Merged snapshot with all session data

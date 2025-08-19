@@ -1,6 +1,4 @@
-use crate::types::{
-    ModelPricing, SessionBlock, SessionBlockType, TokenUsage, UniqueHash, UsageEntry,
-};
+use crate::types::{ModelPricing, SessionBlock, TokenUsage, UniqueHash, UsageEntry};
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
 
@@ -102,31 +100,28 @@ pub fn identify_session_blocks(
                 let is_active =
                     now.signed_duration_since(last_time) < five_hours && now < block_end;
 
-                let block_type = if is_active {
-                    SessionBlockType::Active
+                if is_active {
+                    blocks.push(SessionBlock::Active {
+                        start_time: block_start,
+                        cost_usd: current_block_cost,
+                        entries: current_block_entries.clone(),
+                    });
                 } else {
-                    SessionBlockType::Completed
-                };
-
-                blocks.push(SessionBlock {
-                    block_type,
-                    start_time: block_start,
-                    end_time: block_end,
-                    cost_usd: current_block_cost,
-                    entries: current_block_entries.clone(),
-                });
+                    blocks.push(SessionBlock::Completed {
+                        start_time: block_start,
+                        cost_usd: current_block_cost,
+                        entries: current_block_entries.clone(),
+                    });
+                }
 
                 // If there's an idle period, create an idle block
                 if time_since_last_entry > five_hours {
                     let gap_start = last_time + five_hours;
                     let gap_end = entry_time;
 
-                    blocks.push(SessionBlock {
-                        block_type: SessionBlockType::Idle,
+                    blocks.push(SessionBlock::Idle {
                         start_time: gap_start,
                         end_time: gap_end,
-                        cost_usd: 0.0,
-                        entries: Vec::new(),
                     });
                 }
 
@@ -151,19 +146,19 @@ pub fn identify_session_blocks(
         let last_time = last_entry_time.unwrap();
         let is_active = now.signed_duration_since(last_time) < five_hours && now < block_end;
 
-        let block_type = if is_active {
-            SessionBlockType::Active
+        if is_active {
+            blocks.push(SessionBlock::Active {
+                start_time: block_start,
+                cost_usd: current_block_cost,
+                entries: current_block_entries,
+            });
         } else {
-            SessionBlockType::Completed
-        };
-
-        blocks.push(SessionBlock {
-            block_type,
-            start_time: block_start,
-            end_time: block_end,
-            cost_usd: current_block_cost,
-            entries: current_block_entries,
-        });
+            blocks.push(SessionBlock::Completed {
+                start_time: block_start,
+                cost_usd: current_block_cost,
+                entries: current_block_entries,
+            });
+        }
     }
 
     blocks
@@ -171,20 +166,18 @@ pub fn identify_session_blocks(
 
 /// Find the active block from a list of blocks
 pub fn find_active_block(blocks: &[SessionBlock]) -> Option<&SessionBlock> {
-    blocks
-        .iter()
-        .find(|b| b.block_type == SessionBlockType::Active)
+    blocks.iter().find(|b| b.is_active())
 }
 
 /// Calculate burn rate for a block
 pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
-    if block.block_type == SessionBlockType::Idle || block.entries.is_empty() {
+    if block.is_idle() || block.entries().is_empty() {
         return None;
     }
 
     // Get first and last entry timestamps
-    let first_entry = block.entries.first()?;
-    let last_entry = block.entries.last()?;
+    let first_entry = block.entries().first()?;
+    let last_entry = block.entries().last()?;
 
     let first_time = first_entry
         .data
@@ -206,5 +199,5 @@ pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
     }
 
     // Calculate cost per hour
-    Some((block.cost_usd / duration_minutes) * 60.0)
+    Some((block.cost_usd() / duration_minutes) * 60.0)
 }

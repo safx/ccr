@@ -54,10 +54,10 @@ async fn main() -> Result<()> {
     let (block_cost, burn_rate, remaining_minutes) = if let Some(block) = find_active_block(&blocks)
     {
         (
-            block.cost_usd,
+            block.cost_usd(),
             calculate_burn_rate(block),
             block
-                .end_time
+                .end_time()
                 .signed_duration_since(Local::now().with_timezone(&Utc))
                 .num_minutes(),
         )
