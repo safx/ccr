@@ -7,9 +7,8 @@ use tokio::fs as async_fs;
 // Calculate context tokens from JSONL transcript
 pub async fn calculate_context_tokens(transcript_path: &Path) -> Option<String> {
     // Try to read the file
-    let content = match async_fs::read_to_string(transcript_path).await {
-        Ok(content) => content,
-        Err(_) => return None,
+    let Ok(content) = async_fs::read_to_string(transcript_path).await else {
+        return None;
     };
 
     // Parse JSONL lines from last to first (most recent usage info)

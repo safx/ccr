@@ -36,13 +36,12 @@ pub fn identify_session_blocks(
 
     for entry in sorted_entries.iter() {
         // Parse timestamp
-        let entry_time = match entry
+        let Some(entry_time) = entry
             .timestamp
             .as_ref()
             .and_then(|t| t.parse::<DateTime<Utc>>().ok())
-        {
-            Some(t) => t,
-            None => continue,
+        else {
+            continue;
         };
 
         // Check for duplicate (only when BOTH IDs exist)
@@ -55,35 +54,24 @@ pub fn identify_session_blocks(
             }
             processed_hashes.insert(hash);
         }
-        // If either ID is missing, keep the entry (no deduplication)
 
         // Calculate entry cost (prefer costUSD, fallback to calculating from tokens)
         let entry_cost = if let Some(cost) = entry.cost_usd {
             cost
-        } else if let Some(message) = &entry.message {
-            if let Some(usage) = &message.usage {
-                let model_name = message.model.as_deref().or(entry.model.as_deref());
-
-                if let Some(model_name) = model_name {
-                    if let Some(pricing) = get_model_pricing(model_name, pricing_map) {
-                        calculate_cost(
-                            &TokenUsage {
-                                input_tokens: usage.input_tokens,
-                                output_tokens: usage.output_tokens,
-                                cache_creation_tokens: usage.cache_creation_input_tokens,
-                                cache_read_tokens: usage.cache_read_input_tokens,
-                            },
-                            pricing,
-                        )
-                    } else {
-                        0.0
-                    }
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
-            }
+        } else if let Some(message) = &entry.message
+            && let Some(usage) = &message.usage
+            && let Some(model_name) = message.model.as_deref().or(entry.model.as_deref())
+            && let Some(pricing) = get_model_pricing(model_name, pricing_map)
+        {
+            calculate_cost(
+                &TokenUsage {
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    cache_creation_tokens: usage.cache_creation_input_tokens,
+                    cache_read_tokens: usage.cache_read_input_tokens,
+                },
+                pricing,
+            )
         } else {
             0.0
         };
