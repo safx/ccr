@@ -78,20 +78,20 @@ mod tests {
         // Test basic hash creation
         let msg_id1 = MessageId::from("msg_123");
         let req_id1 = RequestId::from("req_456");
-        let hash1 = UniqueHash::from((&msg_id1, &req_id1));
+        let hash1 = UniqueHash::from_ids(&msg_id1, &req_id1);
         assert_eq!(hash1.as_str(), "msg_123:req_456");
 
         // Test with different IDs
         let msg_id2 = MessageId::from("msg_789");
         let req_id2 = RequestId::from("req_999");
-        let hash2 = UniqueHash::from((&msg_id2, &req_id2));
+        let hash2 = UniqueHash::from_ids(&msg_id2, &req_id2);
         assert_eq!(hash2.as_str(), "msg_789:req_999");
 
         // Test uniqueness
         assert_ne!(hash1, hash2);
 
         // Test consistency (same inputs produce same output)
-        let hash3 = UniqueHash::from((&msg_id1, &req_id1));
+        let hash3 = UniqueHash::from_ids(&msg_id1, &req_id1);
         assert_eq!(hash1, hash3);
     }
 
@@ -100,7 +100,7 @@ mod tests {
         if let (Some(message), Some(request_id)) = (&entry.data.message, &entry.data.request_id)
             && let Some(message_id) = &message.id
         {
-            let unique_hash = UniqueHash::from((message_id, request_id));
+            let unique_hash = UniqueHash::from_ids(message_id, request_id);
             if processed_hashes.contains(&unique_hash) {
                 return true;
             }

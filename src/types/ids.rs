@@ -6,15 +6,13 @@ use std::fmt;
 pub struct UniqueHash(String);
 
 impl UniqueHash {
+    pub fn from_ids(message_id: &MessageId, request_id: &RequestId) -> Self {
+        Self(format!("{}:{}", message_id.as_str(), request_id.as_str()))
+    }
+
     /// Get the inner string value
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-impl From<(&MessageId, &RequestId)> for UniqueHash {
-    fn from((message_id, request_id): (&MessageId, &RequestId)) -> Self {
-        Self(format!("{}:{}", message_id.as_str(), request_id.as_str()))
     }
 }
 

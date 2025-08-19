@@ -166,7 +166,7 @@ pub async fn load_all_data(
                                 && let (Some(msg_id), Some(req_id)) =
                                     (&message.id, &entry.data.request_id)
                             {
-                                let hash = UniqueHash::from((msg_id, req_id));
+                                let hash = UniqueHash::from_ids(msg_id, req_id);
                                 if hashes.contains(&hash) {
                                     continue;
                                 }

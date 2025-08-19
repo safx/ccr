@@ -49,7 +49,7 @@ pub fn identify_session_blocks(
         if let Some(message) = &entry.data.message
             && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.data.request_id)
         {
-            let hash = UniqueHash::from((msg_id, req_id));
+            let hash = UniqueHash::from_ids(msg_id, req_id);
             if processed_hashes.contains(&hash) {
                 continue;
             }
