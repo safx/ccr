@@ -9,7 +9,7 @@ fn calculate_cost(tokens: &TokenUsage, pricing: &ModelPricing) -> f64 {
 }
 
 /// Calculate entry cost with pricing map
-pub fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
+fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
     if let Some(cost) = entry.data.cost_usd {
         return cost;
     }
@@ -29,6 +29,14 @@ pub fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
     }
 
     0.0
+}
+
+/// Calculate total cost for an iterator of entries
+pub fn calculate_entry_costs<'a, I>(entries: I) -> f64
+where
+    I: Iterator<Item = &'a UsageEntry>,
+{
+    entries.map(calculate_entry_cost).sum()
 }
 
 #[cfg(test)]

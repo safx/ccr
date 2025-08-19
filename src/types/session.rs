@@ -1,5 +1,3 @@
-use crate::pricing::calculate_entry_cost;
-
 use super::ids::SessionId;
 use super::usage::UsageEntry;
 use chrono::{DateTime, Duration, Local, Utc};
@@ -72,8 +70,8 @@ impl SessionBlock {
         match self {
             SessionBlock::Idle { .. } => 0.0,
             SessionBlock::Active { entries, .. } | SessionBlock::Completed { entries, .. } => {
-                use crate::pricing::calculate_entry_cost;
-                entries.iter().map(calculate_entry_cost).sum()
+                use crate::pricing::calculate_entry_costs;
+                calculate_entry_costs(entries.iter())
             }
         }
     }
@@ -135,26 +133,18 @@ impl MergedUsageSnapshot {
     /// Calculate today's cost
     /// Uses today_entries() to get today's data and calculates total cost
     pub fn calculate_today_cost(&self) -> f64 {
-        use rayon::prelude::*;
-
-        self.today_entries()
-            .par_iter()
-            .map(calculate_entry_cost)
-            .sum()
+        use crate::pricing::calculate_entry_costs;
+        calculate_entry_costs(self.today_entries().iter())
     }
 
     /// Calculate cost for a specific session
     /// Filters entries by session_id and calculates total cost
     pub fn calculate_session_cost(&self, session_id: &SessionId) -> f64 {
-        use rayon::prelude::*;
-
-        let session_cost: f64 = self
-            .all_entries
-            .par_iter()
-            .filter(|entry| entry.session_id == *session_id)
-            .map(calculate_entry_cost)
-            .sum();
-
-        session_cost
+        use crate::pricing::calculate_entry_costs;
+        calculate_entry_costs(
+            self.all_entries
+                .iter()
+                .filter(|entry| entry.session_id == *session_id),
+        )
     }
 }
