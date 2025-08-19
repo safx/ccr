@@ -21,14 +21,14 @@ mod tests {
     #[test]
     fn test_model_pricing_fields() {
         let pricing = ModelPricing {
-            input_cost_per_token: Some(0.000015),
-            output_cost_per_token: Some(0.000075),
-            cache_creation_input_token_cost: Some(0.00001875),
-            cache_read_input_token_cost: Some(0.0000015),
+            input_cost_per_token: 0.000015,
+            output_cost_per_token: 0.000075,
+            cache_creation_input_token_cost: 0.00001875,
+            cache_read_input_token_cost: 0.0000015,
         };
 
-        assert_eq!(pricing.input_cost_per_token, Some(0.000015));
-        assert_eq!(pricing.output_cost_per_token, Some(0.000075));
+        assert_eq!(pricing.input_cost_per_token, 0.000015);
+        assert_eq!(pricing.output_cost_per_token, 0.000075);
     }
 
     #[test]

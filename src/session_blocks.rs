@@ -62,35 +62,16 @@ pub fn identify_session_blocks(
         {
             let pricing = ModelPricing::from(model_id);
             let tokens = TokenUsage {
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                cache_creation_tokens: usage.cache_creation_input_tokens,
-                cache_read_tokens: usage.cache_read_input_tokens,
+                input_tokens: usage.input_tokens.unwrap_or(0),
+                output_tokens: usage.output_tokens.unwrap_or(0),
+                cache_creation_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
+                cache_read_tokens: usage.cache_read_input_tokens.unwrap_or(0),
             };
             // Calculate cost inline
-            let mut cost = 0.0;
-            if let (Some(input), Some(price)) = (tokens.input_tokens, pricing.input_cost_per_token)
-            {
-                cost += input as f64 * price;
-            }
-            if let (Some(output), Some(price)) =
-                (tokens.output_tokens, pricing.output_cost_per_token)
-            {
-                cost += output as f64 * price;
-            }
-            if let (Some(cache_creation), Some(price)) = (
-                tokens.cache_creation_tokens,
-                pricing.cache_creation_input_token_cost,
-            ) {
-                cost += cache_creation as f64 * price;
-            }
-            if let (Some(cache_read), Some(price)) = (
-                tokens.cache_read_tokens,
-                pricing.cache_read_input_token_cost,
-            ) {
-                cost += cache_read as f64 * price;
-            }
-            cost
+            tokens.input_tokens as f64 * pricing.input_cost_per_token
+                + tokens.output_tokens as f64 * pricing.output_cost_per_token
+                + tokens.cache_creation_tokens as f64 * pricing.cache_creation_input_token_cost
+                + tokens.cache_read_tokens as f64 * pricing.cache_read_input_token_cost
         } else {
             0.0
         };
