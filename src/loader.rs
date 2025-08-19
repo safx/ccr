@@ -192,7 +192,12 @@ pub async fn load_all_data(
     }
 
     // Sort all entries by timestamp once (string sort is sufficient for ISO 8601)
-    all_entries.sort_by(|a, b| a.data.timestamp.as_deref().cmp(&b.data.timestamp.as_deref()));
+    all_entries.sort_by(|a, b| {
+        a.data
+            .timestamp
+            .as_deref()
+            .cmp(&b.data.timestamp.as_deref())
+    });
 
     Ok(MergedUsageSnapshot { all_entries })
 }

@@ -106,7 +106,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let t6 = Instant::now();
-    test_entries.sort_by(|a, b| a.data.timestamp.as_deref().cmp(&b.data.timestamp.as_deref()));
+    test_entries.sort_by(|a, b| {
+        a.data
+            .timestamp
+            .as_deref()
+            .cmp(&b.data.timestamp.as_deref())
+    });
     println!("   Sort 100k entries: {:?}", t6.elapsed());
 
     // 7. Memory allocation patterns

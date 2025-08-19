@@ -1,4 +1,6 @@
-use crate::types::{ModelPricing, SessionBlock, TokenUsage, UniqueHash, UsageEntry};
+use crate::types::{
+    ModelPricing, SessionBlock, SessionBlockType, TokenUsage, UniqueHash, UsageEntry,
+};
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
 
@@ -100,27 +102,31 @@ pub fn identify_session_blocks(
                 let is_active =
                     now.signed_duration_since(last_time) < five_hours && now < block_end;
 
+                let block_type = if is_active {
+                    SessionBlockType::Active
+                } else {
+                    SessionBlockType::Completed
+                };
+
                 blocks.push(SessionBlock {
+                    block_type,
                     start_time: block_start,
                     end_time: block_end,
-                    is_active,
                     cost_usd: current_block_cost,
                     entries: current_block_entries.clone(),
-                    is_gap: false,
                 });
 
-                // If there's a gap, create a gap block
+                // If there's an idle period, create an idle block
                 if time_since_last_entry > five_hours {
                     let gap_start = last_time + five_hours;
                     let gap_end = entry_time;
 
                     blocks.push(SessionBlock {
+                        block_type: SessionBlockType::Idle,
                         start_time: gap_start,
                         end_time: gap_end,
-                        is_active: false,
                         cost_usd: 0.0,
                         entries: Vec::new(),
-                        is_gap: true,
                     });
                 }
 
@@ -145,13 +151,18 @@ pub fn identify_session_blocks(
         let last_time = last_entry_time.unwrap();
         let is_active = now.signed_duration_since(last_time) < five_hours && now < block_end;
 
+        let block_type = if is_active {
+            SessionBlockType::Active
+        } else {
+            SessionBlockType::Completed
+        };
+
         blocks.push(SessionBlock {
+            block_type,
             start_time: block_start,
             end_time: block_end,
-            is_active,
             cost_usd: current_block_cost,
             entries: current_block_entries,
-            is_gap: false,
         });
     }
 
@@ -160,12 +171,14 @@ pub fn identify_session_blocks(
 
 /// Find the active block from a list of blocks
 pub fn find_active_block(blocks: &[SessionBlock]) -> Option<&SessionBlock> {
-    blocks.iter().find(|b| b.is_active && !b.is_gap)
+    blocks
+        .iter()
+        .find(|b| b.block_type == SessionBlockType::Active)
 }
 
 /// Calculate burn rate for a block
 pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
-    if block.is_gap || block.entries.is_empty() {
+    if block.block_type == SessionBlockType::Idle || block.entries.is_empty() {
         return None;
     }
 

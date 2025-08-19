@@ -9,5 +9,5 @@ pub use input::{
     Model, StatuslineHookJson, TranscriptMessage, TranscriptMessageContent, TranscriptUsage,
 };
 pub use pricing::{ModelPricing, TokenUsage};
-pub use session::{MergedUsageSnapshot, SessionBlock};
+pub use session::{MergedUsageSnapshot, SessionBlock, SessionBlockType};
 pub use usage::{Message, Usage, UsageEntry, UsageEntryData};

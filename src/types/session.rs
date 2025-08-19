@@ -4,14 +4,20 @@ use super::ids::SessionId;
 use super::usage::UsageEntry;
 use chrono::{DateTime, Local, Utc};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionBlockType {
+    Completed, // Completed session block
+    Active,    // Currently active session block
+    Idle,      // Idle period between sessions
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionBlock {
+    pub block_type: SessionBlockType,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
-    pub is_active: bool,
     pub cost_usd: f64,
     pub entries: Vec<UsageEntry>,
-    pub is_gap: bool,
 }
 
 /// Merged snapshot with all session data

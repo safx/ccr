@@ -9,8 +9,8 @@ pub mod utils;
 // Re-export commonly used items for backward compatibility
 pub use types::ids::ModelId;
 pub use types::{
-    MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
-    UniqueHash, Usage, UsageEntry, UsageEntryData,
+    MergedUsageSnapshot, Message, ModelPricing, SessionBlock, SessionBlockType, StatuslineHookJson,
+    TokenUsage, UniqueHash, Usage, UsageEntry, UsageEntryData,
 };
 
 #[cfg(test)]
@@ -53,7 +53,10 @@ mod tests {
         let data: UsageEntryData = serde_json::from_str(json_str).unwrap();
         let entry = UsageEntry::from_data(data, "test-session".into());
 
-        assert_eq!(entry.data.timestamp, Some("2024-01-15T10:30:00Z".to_string()));
+        assert_eq!(
+            entry.data.timestamp,
+            Some("2024-01-15T10:30:00Z".to_string())
+        );
         assert_eq!(entry.data.model, Some(ModelId::ClaudeOpus4_1_20250805));
         assert_eq!(entry.data.cost_usd, Some(0.123));
 
