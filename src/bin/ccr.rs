@@ -47,9 +47,7 @@ async fn main() -> Result<()> {
 
     // Calculate metrics from the snapshot
     let today_cost = usage_snapshot.calculate_today_cost();
-    let session_cost = usage_snapshot
-        .calculate_session_cost(&hook_data.session_id)
-        .unwrap_or(0.0);
+    let session_cost = usage_snapshot.calculate_session_cost(&hook_data.session_id);
 
     // Calculate active block
     let blocks = identify_session_blocks(&usage_snapshot.all_entries);

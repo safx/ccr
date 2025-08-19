@@ -61,7 +61,7 @@ impl MergedUsageSnapshot {
 
     /// Calculate cost for a specific session
     /// Filters entries by session_id and calculates total cost
-    pub fn calculate_session_cost(&self, session_id: &SessionId) -> Option<f64> {
+    pub fn calculate_session_cost(&self, session_id: &SessionId) -> f64 {
         use rayon::prelude::*;
 
         let session_cost: f64 = self
@@ -71,10 +71,6 @@ impl MergedUsageSnapshot {
             .map(calculate_entry_cost)
             .sum();
 
-        if session_cost > 0.0 {
-            Some(session_cost)
-        } else {
-            None
-        }
+        session_cost
     }
 }
