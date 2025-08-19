@@ -5,7 +5,7 @@ use std::io;
 use std::path::Path;
 
 // Import from organized modules
-use ccr::formatting::{format_currency, format_remaining_time};
+use ccr::formatting::{format_currency, format_number_with_commas, format_remaining_time};
 use ccr::loader::load_all_data;
 use ccr::session_blocks::{calculate_burn_rate, find_active_block, identify_session_blocks};
 use ccr::types::StatuslineHookJson;
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     }
 
     // Load usage snapshot and context info
-    let (usage_snapshot, git_branch, context_info) = tokio::join!(
+    let (usage_snapshot, git_branch, context_tokens) = tokio::join!(
         load_all_data(&claude_paths, &hook_data.session_id),
         get_git_branch(Path::new(&hook_data.cwd)),
         calculate_context_tokens(Path::new(&hook_data.transcript_path))
@@ -103,8 +103,8 @@ async fn main() -> Result<()> {
         } else {
             String::new()
         },
-        context = if let Some(ctx) = context_info {
-            format!(" ⚖️ {}", ctx)
+        context = if let Some(tokens) = context_tokens {
+            format!(" ⚖️ {}", format_context_usage(tokens))
         } else {
             String::new()
         },
@@ -130,4 +130,25 @@ fn get_current_dir(cwd: &str) -> ColoredString {
         .and_then(|n| n.to_str())
         .unwrap_or(cwd)
         .green()
+}
+
+#[inline]
+fn format_context_usage(total_input: u64) -> String {
+    // Calculate percentage (capped at 9999% for display)
+    let max_tokens = 200_000;
+    let percentage = ((total_input as usize * 100) / max_tokens).min(9999);
+
+    let percentage_str = format!("{}%", percentage);
+    let percentage_str = if percentage < 50 {
+        percentage_str.green()
+    } else if percentage < 80 {
+        percentage_str.yellow()
+    } else {
+        percentage_str.red()
+    };
+
+    // Format with thousands separator
+    let formatted = format_number_with_commas(total_input as usize);
+
+    format!("{} ({})", formatted, percentage_str)
 }
