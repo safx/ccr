@@ -15,20 +15,49 @@ pub enum SessionBlock {
     /// Currently active session (within 5 hours)
     Active {
         start_time: DateTime<Utc>,
-        cost_usd: f64,
         entries: Vec<UsageEntry>,
     },
 
     /// Completed past session
     Completed {
         start_time: DateTime<Utc>,
-        cost_usd: f64,
         entries: Vec<UsageEntry>,
     },
 }
 
 impl SessionBlock {
     const BLOCK_DURATION: Duration = Duration::hours(5);
+
+    pub fn new(
+        block_start: DateTime<Utc>,
+        entries: Vec<UsageEntry>,
+        last_entry_time: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Self {
+        const FIVE_HOURS: Duration = Duration::hours(5);
+
+        let block_end = block_start + FIVE_HOURS;
+        let is_active = now.signed_duration_since(last_entry_time) < FIVE_HOURS && now < block_end;
+
+        if is_active {
+            SessionBlock::Active {
+                start_time: block_start,
+                entries,
+            }
+        } else {
+            SessionBlock::Completed {
+                start_time: block_start,
+                entries,
+            }
+        }
+    }
+
+    pub fn idle(start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> SessionBlock {
+        SessionBlock::Idle {
+            start_time,
+            end_time,
+        }
+    }
 
     #[inline(always)]
     pub fn end_time(&self) -> DateTime<Utc> {
@@ -39,12 +68,13 @@ impl SessionBlock {
         }
     }
 
-    #[inline(always)]
     pub fn cost_usd(&self) -> f64 {
         match self {
             SessionBlock::Idle { .. } => 0.0,
-            SessionBlock::Active { cost_usd, .. } => *cost_usd,
-            SessionBlock::Completed { cost_usd, .. } => *cost_usd,
+            SessionBlock::Active { entries, .. } | SessionBlock::Completed { entries, .. } => {
+                use crate::pricing::calculate_entry_cost;
+                entries.iter().map(calculate_entry_cost).sum()
+            }
         }
     }
 

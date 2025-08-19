@@ -1,4 +1,4 @@
-use crate::types::{ModelPricing, SessionBlock, TokenUsage, UniqueHash, UsageEntry};
+use crate::types::{SessionBlock, UniqueHash, UsageEntry};
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
 
@@ -22,14 +22,13 @@ pub fn identify_session_blocks(
         return Vec::new();
     }
 
+    const FIVE_HOURS: Duration = Duration::hours(5);
     let now = Local::now().with_timezone(&Utc);
-    let five_hours = Duration::hours(5);
     let mut blocks = Vec::new();
     let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
 
     let mut current_block_start: Option<DateTime<Utc>> = None;
     let mut current_block_entries: Vec<UsageEntry> = Vec::new();
-    let mut current_block_cost = 0.0;
     let mut last_entry_time: Option<DateTime<Utc>> = None;
 
     for entry in sorted_entries.iter() {
@@ -54,34 +53,10 @@ pub fn identify_session_blocks(
             processed_hashes.insert(hash);
         }
 
-        // Calculate entry cost (prefer costUSD, fallback to calculating from tokens)
-        let entry_cost = if let Some(cost) = entry.data.cost_usd {
-            cost
-        } else if let Some(message) = &entry.data.message
-            && let Some(usage) = &message.usage
-            && let Some(model_id) = message.model.as_ref().or(entry.data.model.as_ref())
-        {
-            let pricing = ModelPricing::from(model_id);
-            let tokens = TokenUsage {
-                input_tokens: usage.input_tokens.unwrap_or(0),
-                output_tokens: usage.output_tokens.unwrap_or(0),
-                cache_creation_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
-                cache_read_tokens: usage.cache_read_input_tokens.unwrap_or(0),
-            };
-            // Calculate cost inline
-            tokens.input_tokens as f64 * pricing.input_cost_per_token
-                + tokens.output_tokens as f64 * pricing.output_cost_per_token
-                + tokens.cache_creation_tokens as f64 * pricing.cache_creation_input_token_cost
-                + tokens.cache_read_tokens as f64 * pricing.cache_read_input_token_cost
-        } else {
-            0.0
-        };
-
         if current_block_start.is_none() {
             // Start first block
             current_block_start = Some(floor_to_hour(entry_time));
             current_block_entries.push(entry.clone());
-            current_block_cost += entry_cost;
             last_entry_time = Some(entry_time);
         } else {
             let block_start = current_block_start.unwrap();
@@ -93,46 +68,27 @@ pub fn identify_session_blocks(
             };
 
             // Check if we need to end the current block
-            if time_since_block_start > five_hours || time_since_last_entry > five_hours {
+            if time_since_block_start > FIVE_HOURS || time_since_last_entry > FIVE_HOURS {
                 // Create and save the current block
-                let block_end = block_start + five_hours;
                 let last_time = last_entry_time.unwrap();
-                let is_active =
-                    now.signed_duration_since(last_time) < five_hours && now < block_end;
-
-                if is_active {
-                    blocks.push(SessionBlock::Active {
-                        start_time: block_start,
-                        cost_usd: current_block_cost,
-                        entries: current_block_entries.clone(),
-                    });
-                } else {
-                    blocks.push(SessionBlock::Completed {
-                        start_time: block_start,
-                        cost_usd: current_block_cost,
-                        entries: current_block_entries.clone(),
-                    });
-                }
+                blocks.push(SessionBlock::new(
+                    block_start,
+                    current_block_entries.clone(),
+                    last_time,
+                    now,
+                ));
 
                 // If there's an idle period, create an idle block
-                if time_since_last_entry > five_hours {
-                    let gap_start = last_time + five_hours;
-                    let gap_end = entry_time;
-
-                    blocks.push(SessionBlock::Idle {
-                        start_time: gap_start,
-                        end_time: gap_end,
-                    });
+                if time_since_last_entry > FIVE_HOURS {
+                    blocks.push(SessionBlock::idle(last_time + FIVE_HOURS, entry_time));
                 }
 
                 // Start new block
                 current_block_start = Some(floor_to_hour(entry_time));
                 current_block_entries = vec![entry.clone()];
-                current_block_cost = entry_cost;
             } else {
                 // Add to current block
                 current_block_entries.push(entry.clone());
-                current_block_cost += entry_cost;
             }
 
             last_entry_time = Some(entry_time);
@@ -141,24 +97,12 @@ pub fn identify_session_blocks(
 
     // Create the final block if there are remaining entries
     if !current_block_entries.is_empty() {
-        let block_start = current_block_start.unwrap();
-        let block_end = block_start + five_hours;
-        let last_time = last_entry_time.unwrap();
-        let is_active = now.signed_duration_since(last_time) < five_hours && now < block_end;
-
-        if is_active {
-            blocks.push(SessionBlock::Active {
-                start_time: block_start,
-                cost_usd: current_block_cost,
-                entries: current_block_entries,
-            });
-        } else {
-            blocks.push(SessionBlock::Completed {
-                start_time: block_start,
-                cost_usd: current_block_cost,
-                entries: current_block_entries,
-            });
-        }
+        blocks.push(SessionBlock::new(
+            current_block_start.unwrap(),
+            current_block_entries,
+            last_entry_time.unwrap(),
+            now,
+        ));
     }
 
     blocks
