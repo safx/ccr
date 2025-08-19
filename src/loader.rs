@@ -53,7 +53,7 @@ pub async fn load_all_data(
     // Six hours ago (for session blocks - ensures we get the current block)
     // This is important for burn rate calculation
     let six_hours_ago = Utc::now()
-        .checked_sub_signed(Duration::hours(6))
+        .checked_sub_signed(Duration::hours(5))
         .unwrap()
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
