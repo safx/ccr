@@ -7,7 +7,7 @@ pub mod types;
 pub mod utils;
 
 // Re-export commonly used items for backward compatibility
-pub use pricing::{MODEL_PRICING, calculate_cost};
+pub use pricing::calculate_cost;
 pub use types::ids::ModelId;
 pub use types::{
     MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,

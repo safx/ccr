@@ -50,32 +50,25 @@ impl MergedUsageSnapshot {
 
     /// Calculate today's cost
     /// Uses today_entries() to get today's data and calculates total cost
-    pub fn calculate_today_cost(
-        &self,
-        pricing_map: &std::collections::HashMap<&str, crate::types::ModelPricing>,
-    ) -> f64 {
+    pub fn calculate_today_cost(&self) -> f64 {
         use rayon::prelude::*;
 
         self.today_entries()
             .par_iter()
-            .map(|entry| calculate_entry_cost(entry, pricing_map))
+            .map(calculate_entry_cost)
             .sum()
     }
 
     /// Calculate cost for a specific session
     /// Filters entries by session_id and calculates total cost
-    pub fn calculate_session_cost(
-        &self,
-        session_id: &SessionId,
-        pricing_map: &std::collections::HashMap<&str, crate::types::ModelPricing>,
-    ) -> Option<f64> {
+    pub fn calculate_session_cost(&self, session_id: &SessionId) -> Option<f64> {
         use rayon::prelude::*;
 
         let session_cost: f64 = self
             .all_entries
             .par_iter()
             .filter(|entry| entry.session_id == *session_id)
-            .map(|entry| calculate_entry_cost(entry, pricing_map))
+            .map(calculate_entry_cost)
             .sum();
 
         if session_cost > 0.0 {

@@ -18,7 +18,6 @@ pub fn floor_to_hour(timestamp: DateTime<Utc>) -> DateTime<Utc> {
 /// This matches the TypeScript implementation in ccusage
 pub fn identify_session_blocks(
     sorted_entries: &[UsageEntry], // Already sorted, passed by reference
-    _pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> Vec<SessionBlock> {
     if sorted_entries.is_empty() {
         return Vec::new();

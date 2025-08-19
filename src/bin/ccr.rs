@@ -7,7 +7,6 @@ use std::path::Path;
 // Import from organized modules
 use ccr::formatting::{format_currency, format_remaining_time};
 use ccr::loader::load_all_data;
-use ccr::pricing::MODEL_PRICING;
 use ccr::session_blocks::{calculate_burn_rate, find_active_block, identify_session_blocks};
 use ccr::types::StatuslineHookJson;
 use ccr::utils::{calculate_context_tokens, get_claude_paths, get_git_branch};
@@ -47,13 +46,13 @@ async fn main() -> Result<()> {
     let usage_snapshot = usage_snapshot?;
 
     // Calculate metrics from the snapshot
-    let today_cost = usage_snapshot.calculate_today_cost(&MODEL_PRICING);
+    let today_cost = usage_snapshot.calculate_today_cost();
     let session_cost = usage_snapshot
-        .calculate_session_cost(&hook_data.session_id, &MODEL_PRICING)
+        .calculate_session_cost(&hook_data.session_id)
         .unwrap_or(0.0);
 
     // Calculate active block
-    let blocks = identify_session_blocks(&usage_snapshot.all_entries, &MODEL_PRICING);
+    let blocks = identify_session_blocks(&usage_snapshot.all_entries);
     let (block_cost, burn_rate, remaining_minutes) = if let Some(block) = find_active_block(&blocks)
     {
         (
