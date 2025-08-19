@@ -1,4 +1,4 @@
-use super::ids::SessionId;
+use super::ids::{ModelId, SessionId};
 use serde::Deserialize;
 
 // Input structure
@@ -19,7 +19,7 @@ pub struct StatuslineHookJson {
 #[derive(Debug, Deserialize)]
 pub struct Model {
     #[allow(dead_code)]
-    pub id: Option<String>,
+    pub id: Option<ModelId>,
     pub display_name: String,
 }
 

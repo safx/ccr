@@ -78,7 +78,7 @@ pub fn calculate_cost(tokens: &TokenUsage, pricing: &ModelPricing) -> f64 {
 /// Calculate entry cost with pricing map
 pub fn calculate_entry_cost(
     entry: &UsageEntry,
-    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
+    _pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> f64 {
     if let Some(cost) = entry.cost_usd {
         return cost;
@@ -87,18 +87,18 @@ pub fn calculate_entry_cost(
     if let Some(message) = &entry.message
         && let Some(usage) = &message.usage
     {
-        let model_name = message.model.as_ref().or(entry.model.as_ref());
+        let model_id = message.model.as_ref().or(entry.model.as_ref());
 
-        if let Some(model_name) = model_name
-            && let Some(pricing) = pricing_map.get(model_name.as_str())
-        {
+        if let Some(model_id) = model_id {
+            // Use From trait to get pricing from ModelId
+            let pricing = ModelPricing::from(model_id);
             let tokens = TokenUsage {
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 cache_creation_tokens: usage.cache_creation_input_tokens,
                 cache_read_tokens: usage.cache_read_input_tokens,
             };
-            return calculate_cost(&tokens, pricing);
+            return calculate_cost(&tokens, &pricing);
         }
     }
 

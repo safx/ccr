@@ -8,6 +8,7 @@ pub mod utils;
 
 // Re-export commonly used items for backward compatibility
 pub use pricing::{MODEL_PRICING, calculate_cost};
+pub use types::ids::ModelId;
 pub use types::{
     MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
     UniqueHash, Usage, UsageEntry,
@@ -53,12 +54,12 @@ mod tests {
         let entry: UsageEntry = serde_json::from_str(json_str).unwrap();
 
         assert_eq!(entry.timestamp, Some("2024-01-15T10:30:00Z".to_string()));
-        assert_eq!(entry.model, Some("claude-opus-4-1-20250805".to_string()));
+        assert_eq!(entry.model, Some(ModelId::ClaudeOpus4_1_20250805));
         assert_eq!(entry.cost_usd, Some(0.123));
 
         let message = entry.message.unwrap();
         assert_eq!(message.id, Some("msg_123".into()));
-        assert_eq!(message.model, Some("claude-opus-4-1-20250805".to_string()));
+        assert_eq!(message.model, Some(ModelId::ClaudeOpus4_1_20250805));
 
         let usage = message.usage.unwrap();
         assert_eq!(usage.input_tokens, Some(1000));

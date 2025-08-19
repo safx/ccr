@@ -18,7 +18,7 @@ pub fn floor_to_hour(timestamp: DateTime<Utc>) -> DateTime<Utc> {
 /// This matches the TypeScript implementation in ccusage
 pub fn identify_session_blocks(
     sorted_entries: &[UsageEntry], // Already sorted, passed by reference
-    pricing_map: &std::collections::HashMap<&str, ModelPricing>,
+    _pricing_map: &std::collections::HashMap<&str, ModelPricing>,
 ) -> Vec<SessionBlock> {
     if sorted_entries.is_empty() {
         return Vec::new();
@@ -60,9 +60,9 @@ pub fn identify_session_blocks(
             cost
         } else if let Some(message) = &entry.message
             && let Some(usage) = &message.usage
-            && let Some(model_name) = message.model.as_deref().or(entry.model.as_deref())
-            && let Some(pricing) = get_model_pricing(model_name, pricing_map)
+            && let Some(model_id) = message.model.as_ref().or(entry.model.as_ref())
         {
+            let pricing = ModelPricing::from(model_id);
             calculate_cost(
                 &TokenUsage {
                     input_tokens: usage.input_tokens,
@@ -70,7 +70,7 @@ pub fn identify_session_blocks(
                     cache_creation_tokens: usage.cache_creation_input_tokens,
                     cache_read_tokens: usage.cache_read_input_tokens,
                 },
-                pricing,
+                &pricing,
             )
         } else {
             0.0
@@ -191,31 +191,4 @@ pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
 
     // Calculate cost per hour
     Some((block.cost_usd / duration_minutes) * 60.0)
-}
-
-/// Helper function to get model pricing
-fn get_model_pricing<'a>(
-    model_name: &str,
-    pricing_map: &'a std::collections::HashMap<&str, ModelPricing>,
-) -> Option<&'a ModelPricing> {
-    // Direct match
-    if let Some(pricing) = pricing_map.get(model_name) {
-        return Some(pricing);
-    }
-
-    // Partial match
-    for (key, pricing) in pricing_map {
-        if model_name.contains(key) || key.contains(model_name) {
-            return Some(pricing);
-        }
-    }
-
-    // Fallback based on model type
-    if model_name.to_lowercase().contains("opus") {
-        pricing_map.get("claude-opus-4-1-20250805")
-    } else if model_name.to_lowercase().contains("sonnet") {
-        pricing_map.get("claude-sonnet-4-20250514")
-    } else {
-        None
-    }
 }
