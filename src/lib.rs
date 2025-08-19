@@ -121,9 +121,6 @@ mod tests {
                 usage: None,
             }),
             request_id: Some("req_456".into()),
-            message_id: None,
-            message_model: None,
-            message_usage: None,
             session_id: "session-1".into(),
         };
 
@@ -138,9 +135,6 @@ mod tests {
                 usage: None,
             }),
             request_id: Some("req_456".into()),
-            message_id: None,
-            message_model: None,
-            message_usage: None,
             session_id: "session-2".into(),
         };
 
@@ -155,9 +149,6 @@ mod tests {
                 usage: None,
             }),
             request_id: Some("req_999".into()),
-            message_id: None,
-            message_model: None,
-            message_usage: None,
             session_id: "session-3".into(),
         };
 

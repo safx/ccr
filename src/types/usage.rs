@@ -11,13 +11,7 @@ pub struct UsageEntry {
     pub message: Option<Message>,
     #[serde(rename = "requestId")]
     pub request_id: Option<RequestId>,
-    // Additional fields for session blocks
-    #[serde(skip)]
-    pub message_id: Option<MessageId>,
-    #[serde(skip)]
-    pub message_model: Option<ModelId>,
-    #[serde(skip)]
-    pub message_usage: Option<Usage>,
+
     // Session ID from the file name (always set after parsing from JSONL)
     #[serde(skip)]
     pub session_id: SessionId,
