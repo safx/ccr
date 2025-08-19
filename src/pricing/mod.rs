@@ -34,20 +34,16 @@ pub fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
 
     if let Some(message) = &entry.message
         && let Some(usage) = &message.usage
+        && let Some(model_id) = message.model.as_ref().or(entry.model.as_ref())
     {
-        let model_id = message.model.as_ref().or(entry.model.as_ref());
-
-        if let Some(model_id) = model_id {
-            // Use From trait to get pricing from ModelId
-            let pricing = ModelPricing::from(model_id);
-            let tokens = TokenUsage {
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                cache_creation_tokens: usage.cache_creation_input_tokens,
-                cache_read_tokens: usage.cache_read_input_tokens,
-            };
-            return calculate_cost(&tokens, &pricing);
-        }
+        let pricing = ModelPricing::from(model_id);
+        let tokens = TokenUsage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_creation_tokens: usage.cache_creation_input_tokens,
+            cache_read_tokens: usage.cache_read_input_tokens,
+        };
+        return calculate_cost(&tokens, &pricing);
     }
 
     0.0
