@@ -1,4 +1,3 @@
-use crate::pricing::calculate_cost;
 use crate::types::{ModelPricing, SessionBlock, TokenUsage, UniqueHash, UsageEntry};
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
@@ -62,15 +61,36 @@ pub fn identify_session_blocks(
             && let Some(model_id) = message.model.as_ref().or(entry.model.as_ref())
         {
             let pricing = ModelPricing::from(model_id);
-            calculate_cost(
-                &TokenUsage {
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                    cache_creation_tokens: usage.cache_creation_input_tokens,
-                    cache_read_tokens: usage.cache_read_input_tokens,
-                },
-                &pricing,
-            )
+            let tokens = TokenUsage {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_creation_tokens: usage.cache_creation_input_tokens,
+                cache_read_tokens: usage.cache_read_input_tokens,
+            };
+            // Calculate cost inline
+            let mut cost = 0.0;
+            if let (Some(input), Some(price)) = (tokens.input_tokens, pricing.input_cost_per_token)
+            {
+                cost += input as f64 * price;
+            }
+            if let (Some(output), Some(price)) =
+                (tokens.output_tokens, pricing.output_cost_per_token)
+            {
+                cost += output as f64 * price;
+            }
+            if let (Some(cache_creation), Some(price)) = (
+                tokens.cache_creation_tokens,
+                pricing.cache_creation_input_token_cost,
+            ) {
+                cost += cache_creation as f64 * price;
+            }
+            if let (Some(cache_read), Some(price)) = (
+                tokens.cache_read_tokens,
+                pricing.cache_read_input_token_cost,
+            ) {
+                cost += cache_read as f64 * price;
+            }
+            cost
         } else {
             0.0
         };
