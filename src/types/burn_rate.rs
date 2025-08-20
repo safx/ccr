@@ -1,5 +1,5 @@
+use super::cost::Cost;
 use super::session::SessionBlock;
-use crate::formatting::format_currency;
 use chrono::{DateTime, Utc};
 use colored::ColoredString;
 use colored::*;
@@ -40,7 +40,7 @@ impl BurnRate {
         }
 
         // Calculate cost per hour
-        let cost_per_hour = (block.cost_usd() / duration_minutes) * 60.0;
+        let cost_per_hour = (block.cost().value() / duration_minutes) * 60.0;
         Some(BurnRate(cost_per_hour))
     }
 
@@ -51,7 +51,7 @@ impl BurnRate {
 
     /// Get a colored string representation for terminal output
     pub fn to_colored_string(&self) -> ColoredString {
-        let rate_str = format!("{}/hr", format_currency(self.0));
+        let rate_str = format!("{}/hr", Cost::new(self.0));
         if self.0 < 30.0 {
             rate_str.green()
         } else if self.0 < 100.0 {

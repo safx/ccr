@@ -5,10 +5,10 @@ use std::io;
 use std::path::Path;
 
 // Import from organized modules
-use ccr::formatting::{format_currency, format_remaining_time};
+use ccr::formatting::format_remaining_time;
 use ccr::loader::load_all_data;
 use ccr::session_blocks::{find_active_block, identify_session_blocks};
-use ccr::types::{BurnRate, ContextTokens, StatuslineHookJson};
+use ccr::types::{BurnRate, ContextTokens, Cost, StatuslineHookJson};
 use ccr::utils::{get_claude_paths, get_git_branch};
 
 // Simple Result type alias
@@ -46,15 +46,15 @@ async fn main() -> Result<()> {
     let usage_snapshot = usage_snapshot?;
 
     // Calculate metrics from the snapshot
-    let today_cost = usage_snapshot.calculate_today_cost();
-    let session_cost = usage_snapshot.calculate_session_cost(&hook_data.session_id);
+    let today_cost = usage_snapshot.today_cost();
+    let session_cost = usage_snapshot.session_cost(&hook_data.session_id);
 
     // Calculate active block
     let blocks = identify_session_blocks(&usage_snapshot.all_entries);
     let (block_cost, burn_rate, remaining_minutes) = if let Some(block) = find_active_block(&blocks)
     {
         (
-            block.cost_usd(),
+            block.cost(),
             BurnRate::from_session_block(block),
             block
                 .end_time()
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
                 .num_minutes(),
         )
     } else {
-        (0.0, None, 0)
+        (Cost::new(0.0), None, 0)
     };
 
     // Build and print status line
@@ -81,10 +81,10 @@ async fn main() -> Result<()> {
         } else {
             String::new()
         },
-        today = format_currency(today_cost),
-        session = format_currency(session_cost),
-        block = if block_cost > 0.0 {
-            format!(", {} block", format_currency(block_cost))
+        today = today_cost,
+        session = session_cost,
+        block = if block_cost.is_positive() {
+            format!(", {} block", block_cost)
         } else {
             String::new()
         },

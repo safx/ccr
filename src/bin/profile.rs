@@ -51,11 +51,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Cost calculations
     let t5 = Instant::now();
-    let _today_cost = snapshot.calculate_today_cost();
+    let _today_cost = snapshot.today_cost();
     eprintln!("4. Calculate today cost: {:?}", t5.elapsed());
 
     let t6 = Instant::now();
-    let _session_cost = snapshot.calculate_session_cost(&hook_data.session_id);
+    let _session_cost = snapshot.session_cost(&hook_data.session_id);
     eprintln!("5. Calculate session cost: {:?}", t6.elapsed());
 
     // Identify blocks
