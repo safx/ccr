@@ -1,5 +1,6 @@
+use crate::constants::SESSION_BLOCK_DURATION;
 use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry, UsageEntryData};
-use chrono::{Duration, Local, Utc};
+use chrono::{Local, Utc};
 use rayon::prelude::*;
 use serde_json;
 use std::collections::HashSet;
@@ -37,7 +38,7 @@ pub async fn load_all_data(
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
     // Use a shared mutex for deduplication across all threads
     let global_hashes: Arc<Mutex<HashSet<UniqueHash>>> =
-        Arc::new(Mutex::new(HashSet::with_capacity(50000)));
+        Arc::new(Mutex::new(HashSet::with_capacity(1024)));
 
     // Calculate filter boundaries
     // Today's start (in UTC for comparison with timestamps)
@@ -53,7 +54,7 @@ pub async fn load_all_data(
     // Six hours ago (for session blocks - ensures we get the current block)
     // This is important for burn rate calculation
     let six_hours_ago = Utc::now()
-        .checked_sub_signed(Duration::hours(5))
+        .checked_sub_signed(SESSION_BLOCK_DURATION)
         .unwrap()
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
@@ -184,7 +185,7 @@ pub async fn load_all_data(
         .collect();
 
     // Merge results from all base paths
-    let mut all_entries = Vec::with_capacity(50000);
+    let mut all_entries = Vec::with_capacity(1024);
 
     for task in tasks {
         let data = task.await??;

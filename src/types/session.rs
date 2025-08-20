@@ -1,6 +1,7 @@
 use super::cost::Cost;
 use super::ids::{SessionId, UniqueHash};
 use super::usage::UsageEntry;
+use crate::constants::SESSION_BLOCK_DURATION;
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
 
@@ -12,7 +13,7 @@ pub enum SessionBlock {
         end_time: DateTime<Utc>,
     },
 
-    /// Currently active session (within 5 hours)
+    /// Currently active session (within SESSION_BLOCK_DURATION)
     Active {
         start_time: DateTime<Utc>,
         entries: Vec<UsageEntry>,
@@ -26,18 +27,15 @@ pub enum SessionBlock {
 }
 
 impl SessionBlock {
-    const BLOCK_DURATION: Duration = Duration::hours(5);
-
     pub fn new(
         block_start: DateTime<Utc>,
         entries: Vec<UsageEntry>,
         last_entry_time: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Self {
-        const FIVE_HOURS: Duration = Duration::hours(5);
-
-        let block_end = block_start + FIVE_HOURS;
-        let is_active = now.signed_duration_since(last_entry_time) < FIVE_HOURS && now < block_end;
+        let block_end = block_start + SESSION_BLOCK_DURATION;
+        let is_active =
+            now.signed_duration_since(last_entry_time) < SESSION_BLOCK_DURATION && now < block_end;
 
         if is_active {
             SessionBlock::Active {
@@ -63,8 +61,8 @@ impl SessionBlock {
     pub fn end_time(&self) -> DateTime<Utc> {
         match self {
             SessionBlock::Idle { end_time, .. } => *end_time,
-            SessionBlock::Active { start_time, .. } => *start_time + Self::BLOCK_DURATION,
-            SessionBlock::Completed { start_time, .. } => *start_time + Self::BLOCK_DURATION,
+            SessionBlock::Active { start_time, .. } => *start_time + SESSION_BLOCK_DURATION,
+            SessionBlock::Completed { start_time, .. } => *start_time + SESSION_BLOCK_DURATION,
         }
     }
 
@@ -149,7 +147,6 @@ impl MergedUsageSnapshot {
             return Vec::new();
         }
 
-        const FIVE_HOURS: Duration = Duration::hours(5);
         let now = Local::now().with_timezone(&Utc);
         let mut blocks = Vec::new();
         let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
@@ -195,7 +192,9 @@ impl MergedUsageSnapshot {
                 };
 
                 // Check if we need to end the current block
-                if time_since_block_start > FIVE_HOURS || time_since_last_entry > FIVE_HOURS {
+                if time_since_block_start > SESSION_BLOCK_DURATION
+                    || time_since_last_entry > SESSION_BLOCK_DURATION
+                {
                     // Create and save the current block
                     let last_time = last_entry_time.unwrap();
                     blocks.push(SessionBlock::new(
@@ -206,8 +205,11 @@ impl MergedUsageSnapshot {
                     ));
 
                     // If there's an idle period, create an idle block
-                    if time_since_last_entry > FIVE_HOURS {
-                        blocks.push(SessionBlock::idle(last_time + FIVE_HOURS, entry_time));
+                    if time_since_last_entry > SESSION_BLOCK_DURATION {
+                        blocks.push(SessionBlock::idle(
+                            last_time + SESSION_BLOCK_DURATION,
+                            entry_time,
+                        ));
                     }
 
                     // Start new block
