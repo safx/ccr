@@ -1,5 +1,4 @@
-use crate::pricing::calculate_entry_costs;
-use crate::types::{SessionBlock, UsageEntry};
+use crate::types::{ModelPricing, SessionBlock, TokenUsage, UsageEntry};
 use std::fmt;
 
 /// A newtype wrapper for cost values in USD
@@ -18,7 +17,8 @@ impl Cost {
     where
         I: Iterator<Item = &'a UsageEntry>,
     {
-        Cost(calculate_entry_costs(entries))
+        let total = entries.map(calculate_entry_cost).sum();
+        Cost(total)
     }
 
     /// Create a Cost from a SessionBlock
@@ -73,6 +73,31 @@ impl From<Cost> for f64 {
     fn from(cost: Cost) -> Self {
         cost.0
     }
+}
+
+/// Calculate cost for a single entry (private helper function)
+fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
+    // First check if there's a pre-calculated cost
+    if let Some(cost) = entry.data.cost_usd {
+        return cost;
+    }
+
+    // Otherwise calculate from token usage
+    if let Some(message) = &entry.data.message
+        && let Some(usage) = &message.usage
+        && let Some(model_id) = message.model.as_ref().or(entry.data.model.as_ref())
+    {
+        let pricing = ModelPricing::from(model_id);
+        let tokens = TokenUsage {
+            input_tokens: usage.input_tokens.unwrap_or(0),
+            output_tokens: usage.output_tokens.unwrap_or(0),
+            cache_creation_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
+            cache_read_tokens: usage.cache_read_input_tokens.unwrap_or(0),
+        };
+        return tokens.calculate_cost(&pricing);
+    }
+
+    0.0
 }
 
 #[cfg(test)]
