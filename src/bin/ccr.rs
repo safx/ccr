@@ -1,5 +1,6 @@
 use chrono::{Local, Utc};
 use colored::*;
+use std::env;
 use std::error::Error;
 use std::io;
 use std::path::Path;
@@ -132,21 +133,40 @@ fn get_current_dir(cwd: &str) -> ColoredString {
 
 #[inline]
 fn format_context_usage(total_input: u64) -> String {
-    // Calculate percentage (capped at 9999% for display)
-    let max_tokens = 200_000;
-    let percentage = ((total_input as usize * 100) / max_tokens).min(9999);
+    // Get max output tokens from environment variable or use default
+    let max_output_tokens = env::var("CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(32_000);
+
+    let max_tokens = 200_000usize;
+
+    let auto_compact_margin = 13_000usize;
+    let actual_max_tokens = max_tokens
+        .saturating_sub(max_output_tokens)
+        .saturating_sub(auto_compact_margin);
+
+    let warning_margin = 20_000usize;
+    let warning_threshold = actual_max_tokens.saturating_sub(warning_margin);
+
+    let percentage = if actual_max_tokens > 0 {
+        ((total_input as usize * 100) / actual_max_tokens).min(9999)
+    } else {
+        0
+    };
 
     let percentage_str = format!("{}%", percentage);
-    let percentage_str = if percentage < 50 {
+    let percentage_str = if percentage < 70 {
         percentage_str.green()
-    } else if percentage < 80 {
+    } else if actual_max_tokens > warning_threshold {
         percentage_str.yellow()
     } else {
         percentage_str.red()
     };
 
     // Format with thousands separator
-    let formatted = format_number_with_commas(total_input as usize);
+    let formatted_total_input = format_number_with_commas(total_input as usize);
+    let formatted_actual_max_tokens = format_number_with_commas(actual_max_tokens);
 
-    format!("{} ({})", formatted, percentage_str)
+    format!("{percentage_str} ({formatted_total_input} / {formatted_actual_max_tokens})")
 }

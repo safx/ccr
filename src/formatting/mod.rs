@@ -1,6 +1,8 @@
 // Format currency
 pub fn format_currency(value: f64) -> String {
-    format!("${:.2}", value)
+    // Handle negative zero case
+    let formatted_value = if value.abs() < 0.005 { 0.00 } else { value };
+    format!("${:.2}", formatted_value)
 }
 
 // Format number with thousands separator
