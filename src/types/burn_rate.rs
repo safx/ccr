@@ -1,6 +1,5 @@
 use super::cost::Cost;
 use super::session::SessionBlock;
-use chrono::{DateTime, Utc};
 use colored::ColoredString;
 use colored::*;
 use std::fmt;
@@ -12,27 +11,8 @@ pub struct BurnRate(f64);
 impl BurnRate {
     /// Create a BurnRate from a SessionBlock
     pub fn from_session_block(block: &SessionBlock) -> Option<Self> {
-        if block.is_idle() || block.entries().is_empty() {
-            return None;
-        }
-
-        // Get first and last entry timestamps
-        let first_entry = block.entries().first()?;
-        let last_entry = block.entries().last()?;
-
-        let first_time = first_entry
-            .data
-            .timestamp
-            .as_ref()
-            .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
-        let last_time = last_entry
-            .data
-            .timestamp
-            .as_ref()
-            .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
-
-        // Calculate duration from first to last entry (not from block start)
-        let duration_minutes = last_time.signed_duration_since(first_time).num_minutes() as f64;
+        // Get actual duration in minutes from the block
+        let duration_minutes = block.actual_duration_minutes()?;
 
         // Skip if duration is 0 or negative
         if duration_minutes <= 0.0 {

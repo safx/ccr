@@ -11,7 +11,7 @@ use tokio::task;
 
 // Capacity constants for performance optimization
 const INITIAL_HASH_CAPACITY: usize = 1024;
-const ENTRIES_BATCH_CAPACITY: usize = 50;
+const ENTRIES_BATCH_CAPACITY: usize = 128;
 const ALL_ENTRIES_CAPACITY: usize = 1024;
 
 /// Filter boundaries for data loading

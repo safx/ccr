@@ -88,6 +88,42 @@ impl SessionBlock {
     pub fn is_active(&self) -> bool {
         matches!(self, SessionBlock::Active { .. })
     }
+
+    /// Get the actual duration from first to last entry
+    /// Returns None if block is idle or has no entries with valid timestamps
+    pub fn actual_duration(&self) -> Option<Duration> {
+        if self.is_idle() {
+            return None;
+        }
+
+        let entries = self.entries();
+        if entries.is_empty() {
+            return None;
+        }
+
+        // Get first and last entry timestamps
+        let first_entry = entries.first()?;
+        let last_entry = entries.last()?;
+
+        let first_time = first_entry
+            .data
+            .timestamp
+            .as_ref()
+            .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
+        let last_time = last_entry
+            .data
+            .timestamp
+            .as_ref()
+            .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
+
+        Some(last_time.signed_duration_since(first_time))
+    }
+
+    /// Get the actual duration in minutes
+    /// Returns None if no valid duration can be calculated
+    pub fn actual_duration_minutes(&self) -> Option<f64> {
+        self.actual_duration().map(|d| d.num_minutes() as f64)
+    }
 }
 
 /// Merged snapshot with all session data
