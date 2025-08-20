@@ -4,10 +4,9 @@ use std::io;
 use std::path::Path;
 
 // Import from organized modules
-use ccr::loader::load_all_data;
 use ccr::session_blocks::{find_active_block, identify_session_blocks};
 use ccr::types::{BurnRate, ContextTokens, Cost, RemainingTime, StatuslineHookJson};
-use ccr::utils::{get_claude_paths, get_git_branch};
+use ccr::utils::{get_claude_paths, get_git_branch, load_all_data};
 
 // Simple Result type alias
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;

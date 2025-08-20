@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // === MAIN BOTTLENECK: load_all_data ===
     let t3 = Instant::now();
-    let snapshot = ccr::loader::load_all_data(&paths, &hook_data.session_id).await?;
+    let snapshot = ccr::utils::load_all_data(&paths, &hook_data.session_id).await?;
     eprintln!("3. Load all data: {:?}", t3.elapsed());
     eprintln!("   Entries: {}", snapshot.all_entries.len());
 
