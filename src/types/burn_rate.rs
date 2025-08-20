@@ -1,7 +1,7 @@
 use super::cost::Cost;
 use super::session::SessionBlock;
 use colored::ColoredString;
-use colored::*;
+use colored::Colorize;
 use std::fmt;
 
 /// Represents the burn rate (cost per hour) for a session
@@ -22,11 +22,6 @@ impl BurnRate {
         // Calculate cost per hour
         let cost_per_hour = (block.cost().value() / duration_minutes) * 60.0;
         Some(BurnRate(cost_per_hour))
-    }
-
-    /// Get the raw value
-    pub fn value(&self) -> f64 {
-        self.0
     }
 
     /// Get a colored string representation for terminal output
@@ -56,12 +51,6 @@ mod tests {
     fn test_burn_rate_display() {
         let rate = BurnRate(25.50);
         assert_eq!(format!("{}", rate), "$25.50/hr");
-    }
-
-    #[test]
-    fn test_burn_rate_value() {
-        let rate = BurnRate(42.42);
-        assert_eq!(rate.value(), 42.42);
     }
 
     #[test]

@@ -44,12 +44,6 @@ impl Cost {
         format!("${:.2}", formatted_value)
     }
 
-    /// Check if the cost is zero (within floating point tolerance)
-    #[inline]
-    pub fn is_zero(&self) -> bool {
-        self.0.abs() < 0.005
-    }
-
     /// Check if the cost is positive (greater than tolerance)
     #[inline]
     pub fn is_positive(&self) -> bool {
@@ -116,11 +110,6 @@ mod tests {
 
     #[test]
     fn test_cost_zero_checks() {
-        assert!(Cost::new(0.0).is_zero());
-        assert!(Cost::new(0.004).is_zero());
-        assert!(!Cost::new(0.005).is_zero());
-        assert!(!Cost::new(1.0).is_zero());
-
         assert!(!Cost::new(0.0).is_positive());
         assert!(!Cost::new(0.005).is_positive());
         assert!(Cost::new(0.006).is_positive());

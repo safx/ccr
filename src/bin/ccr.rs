@@ -1,4 +1,4 @@
-use colored::*;
+use colored::{ColoredString, Colorize};
 use std::error::Error;
 use std::io;
 use std::path::Path;

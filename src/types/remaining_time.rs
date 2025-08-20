@@ -1,6 +1,6 @@
 use crate::types::SessionBlock;
 use chrono::{Local, Utc};
-use colored::*;
+use colored::{ColoredString, Colorize};
 use std::fmt;
 
 /// Represents the remaining time until a session block expires
@@ -20,11 +20,6 @@ impl RemainingTime {
             .signed_duration_since(Local::now().with_timezone(&Utc))
             .num_minutes();
         RemainingTime(remaining_minutes)
-    }
-
-    /// Get the raw value in minutes
-    pub fn minutes(&self) -> i64 {
-        self.0
     }
 
     /// Check if there's time remaining
@@ -90,11 +85,5 @@ mod tests {
     fn test_remaining_time_display() {
         let time = RemainingTime::new(75);
         assert_eq!(format!("{}", time), "1h 15m left");
-    }
-
-    #[test]
-    fn test_remaining_time_from_minutes() {
-        let time = RemainingTime::from(45);
-        assert_eq!(time.minutes(), 45);
     }
 }

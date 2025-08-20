@@ -1,5 +1,5 @@
 use crate::types::TranscriptUsage;
-use colored::*;
+use colored::Colorize;
 use std::env;
 use std::fmt;
 
@@ -21,11 +21,6 @@ impl ContextTokens {
             + usage.cache_read_input_tokens.unwrap_or(0);
 
         ContextTokens(total_input)
-    }
-
-    /// Get raw token count
-    pub fn value(&self) -> u64 {
-        self.0
     }
 
     /// Calculate usage percentage and actual max tokens
@@ -102,12 +97,6 @@ impl fmt::Display for ContextTokens {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_context_tokens_new() {
-        let tokens = ContextTokens::new(1500);
-        assert_eq!(tokens.value(), 1500);
-    }
 
     #[test]
     fn test_context_tokens_display() {
