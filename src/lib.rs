@@ -9,8 +9,8 @@ pub mod utils;
 // Re-export commonly used items for backward compatibility
 pub use types::ids::ModelId;
 pub use types::{
-    MergedUsageSnapshot, Message, ModelPricing, SessionBlock, StatuslineHookJson, TokenUsage,
-    UniqueHash, Usage, UsageEntry, UsageEntryData,
+    BurnRate, ContextTokens, MergedUsageSnapshot, Message, ModelPricing, SessionBlock,
+    StatuslineHookJson, TokenUsage, UniqueHash, Usage, UsageEntry, UsageEntryData,
 };
 
 #[cfg(test)]

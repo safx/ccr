@@ -112,36 +112,3 @@ pub fn identify_session_blocks(
 pub fn find_active_block(blocks: &[SessionBlock]) -> Option<&SessionBlock> {
     blocks.iter().find(|b| b.is_active())
 }
-
-/// Calculate burn rate for a block
-pub fn calculate_burn_rate(block: &SessionBlock) -> Option<f64> {
-    if block.is_idle() || block.entries().is_empty() {
-        return None;
-    }
-
-    // Get first and last entry timestamps
-    let first_entry = block.entries().first()?;
-    let last_entry = block.entries().last()?;
-
-    let first_time = first_entry
-        .data
-        .timestamp
-        .as_ref()
-        .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
-    let last_time = last_entry
-        .data
-        .timestamp
-        .as_ref()
-        .and_then(|t| t.parse::<DateTime<Utc>>().ok())?;
-
-    // Calculate duration from first to last entry (not from block start)
-    let duration_minutes = last_time.signed_duration_since(first_time).num_minutes() as f64;
-
-    // Skip if duration is 0 or negative
-    if duration_minutes <= 0.0 {
-        return None;
-    }
-
-    // Calculate cost per hour
-    Some((block.cost_usd() / duration_minutes) * 60.0)
-}

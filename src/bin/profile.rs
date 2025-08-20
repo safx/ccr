@@ -72,8 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Context tokens
     let t9 = Instant::now();
     let _context =
-        ccr::utils::calculate_context_tokens(std::path::Path::new(&hook_data.transcript_path))
-            .await;
+        ccr::ContextTokens::from_transcript(std::path::Path::new(&hook_data.transcript_path)).await;
     eprintln!("8. Context tokens: {:?}", t9.elapsed());
 
     eprintln!("\n=== Total time: {:?} ===", total_start.elapsed());
