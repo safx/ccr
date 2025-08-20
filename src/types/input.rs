@@ -14,6 +14,8 @@ pub struct StatuslineHookJson {
     pub version: Option<String>,
     #[serde(default)]
     pub output_style: Option<OutputStyle>,
+    #[serde(default)]
+    pub cost: Option<SessionCost>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +34,15 @@ pub struct Workspace {
 #[derive(Debug, Deserialize)]
 pub struct OutputStyle {
     pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionCost {
+    pub total_cost_usd: f64,
+    pub total_duration_ms: u64,
+    pub total_api_duration_ms: u64,
+    pub total_lines_added: u64,
+    pub total_lines_removed: u64,
 }
 
 // Transcript message structure for parsing JSONL
