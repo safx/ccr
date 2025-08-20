@@ -4,6 +4,7 @@ pub mod cost;
 pub mod ids;
 pub mod input;
 pub mod pricing;
+pub mod remaining_time;
 pub mod session;
 pub mod usage;
 
@@ -15,5 +16,6 @@ pub use input::{
     Model, StatuslineHookJson, TranscriptMessage, TranscriptMessageContent, TranscriptUsage,
 };
 pub use pricing::{ModelPricing, TokenUsage};
+pub use remaining_time::RemainingTime;
 pub use session::{MergedUsageSnapshot, SessionBlock};
 pub use usage::{Message, Usage, UsageEntry, UsageEntryData};

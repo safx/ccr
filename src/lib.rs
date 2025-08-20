@@ -1,5 +1,4 @@
 // Module declarations
-pub mod formatting;
 pub mod loader;
 pub mod session_blocks;
 pub mod types;
@@ -8,8 +7,8 @@ pub mod utils;
 // Re-export commonly used items for backward compatibility
 pub use types::ids::ModelId;
 pub use types::{
-    BurnRate, ContextTokens, Cost, MergedUsageSnapshot, Message, ModelPricing, SessionBlock,
-    StatuslineHookJson, TokenUsage, UniqueHash, Usage, UsageEntry, UsageEntryData,
+    BurnRate, ContextTokens, Cost, MergedUsageSnapshot, Message, ModelPricing, RemainingTime,
+    SessionBlock, StatuslineHookJson, TokenUsage, UniqueHash, Usage, UsageEntry, UsageEntryData,
 };
 
 #[cfg(test)]

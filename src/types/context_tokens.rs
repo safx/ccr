@@ -1,4 +1,3 @@
-use crate::formatting::format_number_with_commas;
 use crate::types::TranscriptMessage;
 use colored::*;
 use std::env;
@@ -96,13 +95,31 @@ impl ContextTokens {
             percentage_str.red()
         };
 
-        let formatted_total = format_number_with_commas(self.0 as usize);
-        let formatted_max = format_number_with_commas(actual_max_tokens);
+        let formatted_total = Self::format_number(self.0 as usize);
+        let formatted_max = Self::format_number(actual_max_tokens);
 
         format!(
             "{} ({} / {})",
             percentage_str, formatted_total, formatted_max
         )
+    }
+
+    /// Format a number with thousands separator (private helper)
+    fn format_number(n: usize) -> String {
+        let s = n.to_string();
+        let mut result = String::new();
+        let mut count = 0;
+
+        for c in s.chars().rev() {
+            if count == 3 {
+                result.push(',');
+                count = 0;
+            }
+            result.push(c);
+            count += 1;
+        }
+
+        result.chars().rev().collect()
     }
 }
 

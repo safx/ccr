@@ -1,14 +1,12 @@
-use chrono::{Local, Utc};
 use colored::*;
 use std::error::Error;
 use std::io;
 use std::path::Path;
 
 // Import from organized modules
-use ccr::formatting::format_remaining_time;
 use ccr::loader::load_all_data;
 use ccr::session_blocks::{find_active_block, identify_session_blocks};
-use ccr::types::{BurnRate, ContextTokens, Cost, StatuslineHookJson};
+use ccr::types::{BurnRate, ContextTokens, Cost, RemainingTime, StatuslineHookJson};
 use ccr::utils::{get_claude_paths, get_git_branch};
 
 // Simple Result type alias
@@ -51,18 +49,14 @@ async fn main() -> Result<()> {
 
     // Calculate active block
     let blocks = identify_session_blocks(&usage_snapshot.all_entries);
-    let (block_cost, burn_rate, remaining_minutes) = if let Some(block) = find_active_block(&blocks)
-    {
+    let (block_cost, burn_rate, remaining_time) = if let Some(block) = find_active_block(&blocks) {
         (
             block.cost(),
             BurnRate::from_session_block(block),
-            block
-                .end_time()
-                .signed_duration_since(Local::now().with_timezone(&Utc))
-                .num_minutes(),
+            RemainingTime::from_session_block(block),
         )
     } else {
-        (Cost::new(0.0), None, 0)
+        (Cost::new(0.0), None, RemainingTime::new(0))
     };
 
     // Build and print status line
@@ -76,8 +70,8 @@ async fn main() -> Result<()> {
             String::new()
         },
         model = model_name(&hook_data.model.display_name),
-        remaining = if remaining_minutes > 0 {
-            format!(" ⏰ {}", format_remaining_time(remaining_minutes).magenta())
+        remaining = if remaining_time.has_remaining() {
+            format!(" ⏰ {}", remaining_time.to_colored_string())
         } else {
             String::new()
         },
