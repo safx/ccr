@@ -66,7 +66,7 @@ pub async fn load_all_data(
     };
 
     // Current session ID for filtering
-    let current_session_id = session_id.clone();
+    let current_session_id = session_id;
 
     let tasks: Vec<_> = claude_paths
         .iter()

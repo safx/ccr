@@ -18,6 +18,9 @@ cargo build --release
 
 # Install to ~/bin/
 cp target/release/ccr ~/bin/
+
+# Build all binaries
+cargo build --release --bins
 ```
 
 ### Testing
@@ -32,8 +35,9 @@ cargo nextest run
 cargo test test_name
 cargo nextest run test_name
 
-# Run tests in a specific module
-cargo test --lib module_name
+# Run tests in a specific module (tests are in-module)
+cargo test --lib types::cost::tests
+cargo test --lib types::pricing::tests
 ```
 
 ### Code Quality
@@ -53,7 +57,7 @@ cargo fmt --check
 
 ### Profiling & Benchmarking
 ```bash
-# Basic profiling
+# Basic profiling (requires release build)
 ./target/release/profile
 
 # Detailed profiling breakdown
@@ -61,12 +65,18 @@ cargo fmt --check
 
 # Benchmark with hyperfine
 hyperfine './target/release/ccr' -i
+
+# Filter statistics analysis
+./target/release/filter_stats
 ```
 
 ### Testing the Hook
 ```bash
 # Test with sample input
 cat test_input.json | ./target/release/ccr
+
+# Test with actual stdin JSON
+echo '{"session_id":"test","cwd":"/tmp","transcript_path":"/dev/null","model":{"display_name":"claude-3-5-sonnet-20241022","max_output_tokens":8192}}' | ./target/release/ccr
 
 # Test with actual Claude Code integration
 # Add to ~/.claude/settings.json and restart Claude Code
@@ -76,11 +86,11 @@ cat test_input.json | ./target/release/ccr
 
 ### Core Data Flow
 1. **Input Processing** (`src/bin/ccr.rs`): Receives JSON from stdin containing session info
-2. **Data Loading** (`src/loader.rs`): Parallel loading of JSONL files from Claude Code data directories
-3. **Deduplication** (`src/utils/dedup.rs`): Uses message_id:request_id pairs to eliminate duplicates
-4. **Session Grouping** (`src/session_blocks.rs`): Groups activity into 5-hour blocks
-5. **Cost Calculation** (`src/pricing/mod.rs`): Calculates costs using model-specific pricing
-6. **Output Formatting** (`src/formatting/mod.rs`): Formats the final statusline string
+2. **Data Loading** (`src/utils/data_loader.rs`): Parallel loading of JSONL files from Claude Code data directories
+3. **Deduplication** (inline in data_loader): Uses message_id:request_id pairs (UniqueHash) to eliminate duplicates
+4. **Session Grouping** (`src/types/session.rs`): Groups activity into 5-hour blocks via MergedUsageSnapshot
+5. **Cost Calculation** (`src/types/pricing.rs`): Calculates costs using model-specific pricing
+6. **Output Formatting** (inline in ccr.rs): Formats the final statusline string
 
 ### Key Algorithms
 
@@ -93,12 +103,12 @@ cat test_input.json | ./target/release/ccr
 ### Critical Paths
 
 **Performance-Critical Path**: 
-- `loader.rs::load_all_data()` → Must process potentially thousands of JSONL files quickly
+- `data_loader.rs::load_all_data()` → Must process potentially thousands of JSONL files quickly
 - Uses parallel file processing with Rayon
 - Maintains a shared deduplication HashSet with Arc<Mutex>
 
 **Cost Calculation Path**:
-- `pricing/mod.rs::calculate_cost()` → Handles four token types with model-specific pricing
+- `pricing.rs::ModelPricing::calculate_cost()` → Handles four token types with model-specific pricing
 - Must handle partial data gracefully (missing token types)
 
 ### Data Structures
@@ -109,6 +119,24 @@ cat test_input.json | ./target/release/ccr
 
 **TokenUsage**: Tracks four token types: input, output, cache_creation, cache_read.
 
+**NewType Pattern**: The codebase extensively uses NewType pattern for type safety:
+- `Cost`: Handles monetary values with proper formatting
+- `BurnRate`: Represents hourly cost rate
+- `RemainingTime`: Calculates and formats time remaining
+- `ContextTokens`: Manages context token counts and percentages
+- `SessionId`, `MessageId`, `RequestId`: Type-safe ID wrappers
+
+### Binary Tools
+
+**Main Binary** (`ccr`): The statusline hook that processes stdin JSON and outputs formatted status
+
+**Profiling Tools**:
+- `profile`: Basic performance profiling with timing breakdown
+- `profile_deep`: Detailed component-level profiling
+
+**Utility Tools**:
+- `filter_stats`: Analyzes usage data with various filters
+
 ## Testing Philosophy
 
 Tests focus on:
@@ -117,6 +145,9 @@ Tests focus on:
 - Session block boundary detection
 - JSON parsing for both nested and flattened formats
 - Timezone handling for "today" calculations
+- NewType conversions and formatting
+
+Note: Tests are implemented as inline `#[cfg(test)]` modules within each source file rather than separate test files.
 
 ## Important Notes
 
@@ -124,3 +155,4 @@ Tests focus on:
 - Deduplication is critical for accuracy as Claude Code may write duplicate entries
 - The 5-hour session block algorithm is based on the original ccusage implementation
 - Performance is critical as this runs on every Claude Code statusline update
+- Release builds use aggressive optimizations (LTO, single codegen unit, stripped symbols)
