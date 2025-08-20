@@ -1,5 +1,4 @@
 // Module declarations
-pub mod session_blocks;
 pub mod types;
 pub mod utils;
 

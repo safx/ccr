@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Identify blocks
     let t7 = Instant::now();
-    let blocks = ccr::session_blocks::identify_session_blocks(&snapshot.all_entries);
+    let blocks = snapshot.session_blocks();
     eprintln!("6. Identify blocks: {:?}", t7.elapsed());
     eprintln!("   Blocks: {}", blocks.len());
 
