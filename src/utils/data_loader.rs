@@ -5,12 +5,51 @@ use rayon::prelude::*;
 use serde_json;
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::task;
 
+// Capacity constants for performance optimization
+const INITIAL_HASH_CAPACITY: usize = 1024;
+const ENTRIES_BATCH_CAPACITY: usize = 50;
+const ALL_ENTRIES_CAPACITY: usize = 1024;
+
+/// Filter boundaries for data loading
+struct FilterBoundaries {
+    cutoff_timestamp: String,
+}
+
+impl FilterBoundaries {
+    /// Calculate filter boundaries based on today's start and session block duration
+    fn new() -> Self {
+        // Today's start (in UTC for comparison with timestamps)
+        let today_start = Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .with_timezone(&Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+        // Session block duration ago (for session blocks - ensures we get the current block)
+        let session_block_ago = Utc::now()
+            .checked_sub_signed(SESSION_BLOCK_DURATION)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+        // Use the earlier timestamp as the cutoff
+        let cutoff_timestamp = if today_start < session_block_ago {
+            today_start
+        } else {
+            session_block_ago
+        };
+
+        Self { cutoff_timestamp }
+    }
+}
+
 /// Determines if an entry should be kept based on filtering criteria
-/// Used for early filtering to reduce memory usage
 fn should_keep_entry(
     entry: &UsageEntry,
     current_session_id: &SessionId,
@@ -22,7 +61,6 @@ fn should_keep_entry(
     }
 
     // Keep entries after the cutoff timestamp
-    // (today's entries or last 6 hours, whichever is earlier)
     if let Some(timestamp) = &entry.data.timestamp {
         timestamp.as_str() >= cutoff_timestamp
     } else {
@@ -31,168 +69,179 @@ fn should_keep_entry(
     }
 }
 
+/// Collect all JSONL files from a projects directory
+fn collect_jsonl_files(projects_path: &Path) -> Vec<(PathBuf, String)> {
+    if !projects_path.exists() {
+        return Vec::new();
+    }
+
+    // Collect all project directories
+    let project_dirs: Vec<_> = fs::read_dir(projects_path)
+        .ok()
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Parallel scan of all project directories for JSONL files
+    project_dirs
+        .par_iter()
+        .flat_map(|project_entry| {
+            fs::read_dir(project_entry.path())
+                .ok()
+                .map(|entries| {
+                    entries
+                        .filter_map(|entry| entry.ok())
+                        .filter_map(|file_entry| {
+                            let file_name = file_entry.file_name();
+                            let file_name_str = file_name.to_string_lossy();
+                            if file_name_str.ends_with(".jsonl") {
+                                let session_id =
+                                    file_name_str.trim_end_matches(".jsonl").to_string();
+                                Some((file_entry.path(), session_id))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Process a single JSONL file and return filtered entries
+fn process_jsonl_file(
+    path: &Path,
+    session_file_id: &str,
+    current_session_id: &SessionId,
+    cutoff_timestamp: &str,
+) -> Vec<UsageEntry> {
+    match fs::read_to_string(path) {
+        Ok(contents) => {
+            // Parse lines in parallel with early filtering
+            contents
+                .par_lines()
+                .filter(|line| !line.trim().is_empty())
+                .filter_map(|line| {
+                    let data: UsageEntryData = serde_json::from_str(line).ok()?;
+                    let entry = UsageEntry::from_data(data, SessionId::from(session_file_id));
+
+                    // Apply early filtering to reduce memory usage
+                    if should_keep_entry(&entry, current_session_id, cutoff_timestamp) {
+                        Some(entry)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Deduplicate entries using global hash set
+fn deduplicate_entries(
+    results: Vec<Vec<UsageEntry>>,
+    global_hashes: Arc<Mutex<HashSet<UniqueHash>>>,
+) -> Vec<UsageEntry> {
+    let mut all_entries = Vec::with_capacity(ENTRIES_BATCH_CAPACITY);
+
+    for entries in results {
+        // Minimize lock holding time by batching operations
+        let mut hashes = global_hashes.lock().unwrap();
+
+        for entry in entries {
+            // Check for duplicate only when both IDs exist
+            if let Some(message) = &entry.data.message
+                && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.data.request_id)
+            {
+                let hash = UniqueHash::from_ids(msg_id, req_id);
+                if hashes.contains(&hash) {
+                    continue;
+                }
+                hashes.insert(hash);
+            }
+
+            all_entries.push(entry);
+        }
+        // Lock is automatically released here
+    }
+
+    all_entries
+}
+
+/// Process all files from a single base path
+async fn process_base_path(
+    base_path: PathBuf,
+    global_hashes: Arc<Mutex<HashSet<UniqueHash>>>,
+    current_session_id: SessionId,
+    cutoff_timestamp: String,
+) -> Result<Vec<UsageEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    task::spawn_blocking(move || {
+        let projects_path = base_path.join("projects");
+
+        // Collect all JSONL files
+        let all_files = collect_jsonl_files(&projects_path);
+
+        // Process files in parallel
+        let results: Vec<_> = all_files
+            .par_iter()
+            .map(|(path, session_file_id)| {
+                process_jsonl_file(
+                    path,
+                    session_file_id,
+                    &current_session_id,
+                    &cutoff_timestamp,
+                )
+            })
+            .collect();
+
+        // Deduplicate entries
+        let entries = deduplicate_entries(results, global_hashes);
+
+        Ok(entries)
+    })
+    .await?
+}
+
 /// Load all data with optimized parallelism and early filtering
 pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &SessionId,
 ) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    // Use a shared mutex for deduplication across all threads
+    // Initialize shared state for deduplication
     let global_hashes: Arc<Mutex<HashSet<UniqueHash>>> =
-        Arc::new(Mutex::new(HashSet::with_capacity(1024)));
+        Arc::new(Mutex::new(HashSet::with_capacity(INITIAL_HASH_CAPACITY)));
 
     // Calculate filter boundaries
-    // Today's start (in UTC for comparison with timestamps)
-    let today_start = Local::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_local_timezone(Local)
-        .unwrap()
-        .with_timezone(&Utc)
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let boundaries = FilterBoundaries::new();
 
-    // Six hours ago (for session blocks - ensures we get the current block)
-    // This is important for burn rate calculation
-    let six_hours_ago = Utc::now()
-        .checked_sub_signed(SESSION_BLOCK_DURATION)
-        .unwrap()
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-
-    // Use the earlier of today_start or six_hours_ago as the cutoff
-    // This ensures we capture all necessary data for both "today" stats and "current block"
-    let cutoff_timestamp = if today_start < six_hours_ago {
-        today_start
-    } else {
-        six_hours_ago
-    };
-
-    // Current session ID for filtering
-    let current_session_id = session_id;
-
+    // Process each base path in parallel
     let tasks: Vec<_> = claude_paths
         .iter()
         .map(|base_path| {
-            let base_path = base_path.clone();
-            let global_hashes = Arc::clone(&global_hashes);
-            let cutoff_timestamp = cutoff_timestamp.clone();
-            let current_session_id = current_session_id.clone();
-
-            task::spawn_blocking(
-                move || -> Result<Vec<UsageEntry>, Box<dyn std::error::Error + Send + Sync>> {
-                    let projects_path = base_path.join("projects");
-                    if !projects_path.exists() {
-                        return Ok(Vec::new());
-                    }
-
-                    // Collect all file paths in parallel
-                    let project_dirs: Vec<_> = fs::read_dir(&projects_path)?
-                        .filter_map(|entry| entry.ok())
-                        .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-                        .collect();
-
-                    // Parallel scan of all project directories
-                    let all_files: Vec<_> = project_dirs
-                        .par_iter()
-                        .flat_map(|project_entry| {
-                            fs::read_dir(project_entry.path())
-                                .ok()
-                                .map(|entries| {
-                                    entries
-                                        .filter_map(|entry| entry.ok())
-                                        .filter_map(|file_entry| {
-                                            let file_name = file_entry.file_name();
-                                            let file_name_str = file_name.to_string_lossy();
-                                            if file_name_str.ends_with(".jsonl") {
-                                                let session_from_file = file_name_str
-                                                    .trim_end_matches(".jsonl")
-                                                    .to_string();
-                                                Some((file_entry.path(), session_from_file))
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default()
-                        })
-                        .collect();
-
-                    // Process all files in parallel with line-level parallelism
-                    let results: Vec<_> = all_files
-                        .par_iter()
-                        .map(|(path, session_file_id)| {
-                            // Read entire file into memory first for faster parsing
-                            match fs::read_to_string(path) {
-                                Ok(contents) => {
-                                    // Parse lines in parallel and set session_id
-                                    let entries: Vec<UsageEntry> = contents
-                                        .par_lines()
-                                        .filter(|line| !line.trim().is_empty())
-                                        .filter_map(|line| {
-                                            let data: UsageEntryData =
-                                                serde_json::from_str(line).ok()?;
-                                            let entry = UsageEntry::from_data(
-                                                data,
-                                                SessionId::from(session_file_id.as_str()),
-                                            );
-
-                                            // Apply early filtering
-                                            if should_keep_entry(
-                                                &entry,
-                                                &current_session_id,
-                                                &cutoff_timestamp,
-                                            ) {
-                                                Some(entry)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect();
-
-                                    entries
-                                }
-                                Err(_) => Vec::new(),
-                            }
-                        })
-                        .collect();
-
-                    // Process results with global deduplication
-                    let mut all_entries = Vec::with_capacity(50);
-
-                    for entries in results {
-                        let mut hashes = global_hashes.lock().unwrap();
-                        for entry in entries {
-                            // Global deduplication check
-                            if let Some(message) = &entry.data.message
-                                && let (Some(msg_id), Some(req_id)) =
-                                    (&message.id, &entry.data.request_id)
-                            {
-                                let hash = UniqueHash::from_ids(msg_id, req_id);
-                                if hashes.contains(&hash) {
-                                    continue;
-                                }
-                                hashes.insert(hash);
-                            };
-
-                            all_entries.push(entry);
-                        }
-                    }
-
-                    Ok(all_entries)
-                },
+            process_base_path(
+                base_path.clone(),
+                Arc::clone(&global_hashes),
+                session_id.clone(),
+                boundaries.cutoff_timestamp.clone(),
             )
         })
         .collect();
 
     // Merge results from all base paths
-    let mut all_entries = Vec::with_capacity(1024);
+    let mut all_entries = Vec::with_capacity(ALL_ENTRIES_CAPACITY);
 
     for task in tasks {
-        let data = task.await??;
+        let data = task.await?;
         all_entries.extend(data);
     }
 
-    // Sort all entries by timestamp once (string sort is sufficient for ISO 8601)
+    // Sort all entries by timestamp (string sort is sufficient for ISO 8601)
     all_entries.sort_by(|a, b| {
         a.data
             .timestamp
