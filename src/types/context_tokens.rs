@@ -1,9 +1,7 @@
-use crate::types::TranscriptMessage;
+use crate::types::TranscriptUsage;
 use colored::*;
 use std::env;
 use std::fmt;
-use std::path::Path;
-use tokio::fs as async_fs;
 
 /// Represents the context token usage for a session
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -15,42 +13,14 @@ impl ContextTokens {
         ContextTokens(tokens)
     }
 
-    /// Load context tokens from transcript file
-    pub async fn from_transcript(transcript_path: &Path) -> Option<Self> {
-        // Try to read the file
-        let Ok(content) = async_fs::read_to_string(transcript_path).await else {
-            return None;
-        };
+    /// Create from transcript usage data
+    pub fn from_usage(usage: &TranscriptUsage) -> Self {
+        // Calculate total input tokens including cache
+        let total_input = usage.input_tokens.unwrap_or(0)
+            + usage.cache_creation_input_tokens.unwrap_or(0)
+            + usage.cache_read_input_tokens.unwrap_or(0);
 
-        // Parse JSONL lines from last to first (most recent usage info)
-        let lines: Vec<&str> = content.lines().rev().collect();
-
-        for line in lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            // Try to parse as TranscriptMessage
-            if let Ok(msg) = serde_json::from_str::<TranscriptMessage>(trimmed) {
-                // Check if this is an assistant message with usage info
-                if msg.message_type == "assistant"
-                    && let Some(message) = msg.message
-                    && let Some(usage) = message.usage
-                    && let Some(input_tokens) = usage.input_tokens
-                {
-                    // Calculate total input tokens including cache
-                    let total_input = input_tokens
-                        + usage.cache_creation_input_tokens.unwrap_or(0)
-                        + usage.cache_read_input_tokens.unwrap_or(0);
-
-                    return Some(ContextTokens(total_input));
-                }
-            }
-        }
-
-        // No valid usage information found
-        None
+        ContextTokens(total_input)
     }
 
     /// Get raw token count

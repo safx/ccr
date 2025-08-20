@@ -4,8 +4,8 @@ use std::io;
 use std::path::Path;
 
 // Import from organized modules
-use ccr::types::{BurnRate, ContextTokens, Cost, RemainingTime, StatuslineHookJson};
-use ccr::utils::{get_claude_paths, get_git_branch, load_all_data};
+use ccr::types::{BurnRate, Cost, RemainingTime, StatuslineHookJson};
+use ccr::utils::{get_claude_paths, get_git_branch, load_all_data, load_transcript_usage};
 
 // Simple Result type alias
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -33,11 +33,15 @@ async fn main() -> Result<()> {
     }
 
     // Load usage snapshot and context info
-    let (usage_snapshot, git_branch, context_tokens) = tokio::join!(
+    let (usage_snapshot, git_branch, transcript_usage) = tokio::join!(
         load_all_data(&claude_paths, &hook_data.session_id),
         get_git_branch(Path::new(&hook_data.cwd)),
-        ContextTokens::from_transcript(Path::new(&hook_data.transcript_path))
+        load_transcript_usage(Path::new(&hook_data.transcript_path))
     );
+
+    let context_tokens = transcript_usage
+        .as_ref()
+        .map(ccr::ContextTokens::from_usage);
 
     let usage_snapshot = usage_snapshot?;
 
