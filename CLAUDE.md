@@ -85,12 +85,12 @@ echo '{"session_id":"test","cwd":"/tmp","transcript_path":"/dev/null","model":{"
 ## Architecture & Key Components
 
 ### Core Data Flow
-1. **Input Processing** (`src/bin/ccr.rs`): Receives JSON from stdin containing session info
+1. **Input Processing** (`src/bin/ccr.rs`): Receives JSON from stdin containing session info and saves to `/tmp/test_input.json`
 2. **Data Loading** (`src/utils/data_loader.rs`): Parallel loading of JSONL files from Claude Code data directories
 3. **Deduplication** (inline in data_loader): Uses message_id:request_id pairs (UniqueHash) to eliminate duplicates
 4. **Session Grouping** (`src/types/session.rs`): Groups activity into 5-hour blocks via MergedUsageSnapshot
-5. **Cost Calculation** (`src/types/pricing.rs`): Calculates costs using model-specific pricing
-6. **Output Formatting** (inline in ccr.rs): Formats the final statusline string
+5. **Cost Calculation** (`src/types/cost.rs`): Calculates costs using model-specific pricing, with separate logic for new (cache_creation field) and old formats
+6. **Output Formatting** (inline in ccr.rs): Formats the final statusline string with both calculated and API-provided values
 
 ### Key Algorithms
 
@@ -108,7 +108,8 @@ echo '{"session_id":"test","cwd":"/tmp","transcript_path":"/dev/null","model":{"
 - Maintains a shared deduplication HashSet with Arc<Mutex>
 
 **Cost Calculation Path**:
-- `pricing.rs::ModelPricing::calculate_cost()` → Handles four token types with model-specific pricing
+- `cost.rs::calculate_entry_cost()` → Direct calculation without TokenUsage struct
+- Supports new format with separate 5m/1h cache pricing
 - Must handle partial data gracefully (missing token types)
 
 ### Data Structures
@@ -117,11 +118,20 @@ echo '{"session_id":"test","cwd":"/tmp","transcript_path":"/dev/null","model":{"
 
 **MergedUsageSnapshot**: Aggregated view combining all usage data, session-specific data, and today's usage.
 
-**TokenUsage**: Tracks four token types: input, output, cache_creation, cache_read.
+**SessionCost**: New structure from Claude Code API containing:
+- `total_cost_usd`: API-calculated session cost
+- `total_duration_ms`: Total session duration
+- `total_api_duration_ms`: Actual API call duration
+- `total_lines_added/removed`: Code change statistics
+
+**Usage**: Enhanced structure supporting:
+- Traditional token fields (input, output, cache_creation_input_tokens, cache_read_input_tokens)
+- New `cache_creation` object with ephemeral_5m/1h_input_tokens breakdown
+- `service_tier` field
 
 **NewType Pattern**: The codebase extensively uses NewType pattern for type safety:
 - `Cost`: Handles monetary values with proper formatting
-- `BurnRate`: Represents hourly cost rate
+- `BurnRate`: Represents hourly cost rate (now supports calculation from SessionCost)
 - `RemainingTime`: Calculates and formats time remaining
 - `ContextTokens`: Manages context token counts and percentages
 - `SessionId`, `MessageId`, `RequestId`: Type-safe ID wrappers
@@ -156,3 +166,4 @@ Note: Tests are implemented as inline `#[cfg(test)]` modules within each source 
 - The 5-hour session block algorithm is based on the original ccusage implementation
 - Performance is critical as this runs on every Claude Code statusline update
 - Release builds use aggressive optimizations (LTO, single codegen unit, stripped symbols)
+- New cache_creation field enables separate 5m/1h cache pricing

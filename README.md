@@ -33,13 +33,15 @@ The statusline shows:
 - Remaining time at current rate
 - Context usage percentage
 - Active session blocks
+- Code changes (lines added/removed)
 - Current directory 
 - Git branch (when in a git repository)
+- Model name
 - Output style (when not default)
 
 Example output:
 ```
-ccr main 👤 Opus 4.1 [Learning] ⏰ 1h 11m left 💰 $55.58 today, $17.98 session, $55.58 block 🔥 $15.58/hr ⚖️ 24% (37,248 / 155,000)
+ccr main 👤 Opus 4.1 [Learning] ⏰ 1h 18m left 💰 $63.87 today, $11.58 (api: $5.14) session, $62.35 block 🔥 $21.13/hr (api: $24.28/hr) ⚖️ 70% (108,887 / 155,000) ✏️ +23 -17
 ```
 
 ## How it works
@@ -58,15 +60,28 @@ Claude Code sends JSON via stdin:
 
 ```json
 {
-  "session_id": "session-123",
-  "total_tokens": 1000,
-  "cached_tokens": 200,
-  "cost": 0.01,
-  "cwd": "/path/to/project",
-  "hourly_rate": 10.0,
-  "remaining_minutes": 30,
-  "context_percentage": 80,
-  "transcript_path": null
+  "session_id": "3680e2cb-6c42-4c66-8545-973e66227c1d",
+  "cwd": "/Users/someone/src/mydev/ccr",
+  "transcript_path": "/Users/someone/.claude/projects/-Users-someone-src-mydev-ccr/3680e2cb-6c42-4c66-8545-973e66227c1d.jsonl",
+  "model": {
+    "id": "claude-opus-4-1-20250805",
+    "display_name": "Opus 4.1"
+  },
+  "workspace": {
+    "current_dir": "/Users/someone/src/mydev/ccr",
+    "project_dir": "/Users/someone/src/mydev/ccr"
+  },
+  "version": "1.0.85",
+  "output_style": {
+    "name": "Standard"
+  },
+  "cost": {
+    "total_cost_usd": 5.14,
+    "total_duration_ms": 1234567,
+    "total_api_duration_ms": 456789,
+    "total_lines_added": 23,
+    "total_lines_removed": 17
+  }
 }
 ```
 
@@ -132,6 +147,9 @@ cargo nextest run
 ```bash
 # Run all tests
 cargo test
+
+# Run with cargo-nextest (recommended)
+cargo nextest run
 
 # Test with sample input
 echo '{"session_id":"test","cwd":"/tmp","transcript_path":"/dev/null","model":{"display_name":"claude-3-5-sonnet-20241022","max_output_tokens":8192}}' | ./target/release/ccr
