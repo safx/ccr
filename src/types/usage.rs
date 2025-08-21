@@ -40,4 +40,12 @@ pub struct Usage {
     pub output_tokens: Option<u32>,
     pub cache_creation_input_tokens: Option<u32>,
     pub cache_read_input_tokens: Option<u32>,
+    pub cache_creation: Option<CacheCreation>,
+    pub service_tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CacheCreation {
+    pub ephemeral_5m_input_tokens: Option<u32>,
+    pub ephemeral_1h_input_tokens: Option<u32>,
 }

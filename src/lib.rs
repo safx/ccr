@@ -22,6 +22,7 @@ mod tests {
             output_cost_per_token: 0.000075,
             cache_creation_input_token_cost: 0.00001875,
             cache_read_input_token_cost: 0.0000015,
+            cache_creation_1h_token_cost: 0.00003,
         };
 
         assert_eq!(pricing.input_cost_per_token, 0.000015);
