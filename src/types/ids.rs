@@ -65,6 +65,18 @@ impl UniqueHash {
         Self(format!("{}:{}", message_id.as_str(), request_id.as_str()))
     }
 
+    /// Create UniqueHash from UsageEntryData if both message_id and request_id exist
+    pub fn from_usage_entry_data(data: &crate::types::UsageEntryData) -> Option<Self> {
+        data.message
+            .as_ref()
+            .and_then(|msg| msg.id.as_ref())
+            .and_then(|msg_id| {
+                data.request_id
+                    .as_ref()
+                    .map(|req_id| Self::from_ids(msg_id, req_id))
+            })
+    }
+
     /// Get the inner string value
     pub fn as_str(&self) -> &str {
         &self.0
@@ -190,5 +202,76 @@ impl std::str::FromStr for ModelId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from_str_impl(s))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unique_hash_from_usage_entry_data() {
+        use crate::types::{Message, UsageEntryData};
+
+        // Test with both IDs present
+        let data_with_ids = UsageEntryData {
+            timestamp: Some("2025-01-20T10:00:00Z".to_string()),
+            model: None,
+            cost_usd: None,
+            message: Some(Message {
+                id: Some(MessageId::new("msg-123")),
+                model: None,
+                usage: None,
+            }),
+            request_id: Some(RequestId::new("req-456")),
+        };
+
+        let hash = UniqueHash::from_usage_entry_data(&data_with_ids);
+        assert!(hash.is_some());
+        assert_eq!(hash.unwrap().as_str(), "msg-123:req-456");
+
+        // Test with missing message_id
+        let data_no_msg_id = UsageEntryData {
+            timestamp: Some("2025-01-20T10:00:00Z".to_string()),
+            model: None,
+            cost_usd: None,
+            message: Some(Message {
+                id: None,
+                model: None,
+                usage: None,
+            }),
+            request_id: Some(RequestId::new("req-456")),
+        };
+
+        let hash = UniqueHash::from_usage_entry_data(&data_no_msg_id);
+        assert!(hash.is_none());
+
+        // Test with missing request_id
+        let data_no_req_id = UsageEntryData {
+            timestamp: Some("2025-01-20T10:00:00Z".to_string()),
+            model: None,
+            cost_usd: None,
+            message: Some(Message {
+                id: Some(MessageId::new("msg-123")),
+                model: None,
+                usage: None,
+            }),
+            request_id: None,
+        };
+
+        let hash = UniqueHash::from_usage_entry_data(&data_no_req_id);
+        assert!(hash.is_none());
+
+        // Test with no message at all
+        let data_no_message = UsageEntryData {
+            timestamp: Some("2025-01-20T10:00:00Z".to_string()),
+            model: None,
+            cost_usd: None,
+            message: None,
+            request_id: Some(RequestId::new("req-456")),
+        };
+
+        let hash = UniqueHash::from_usage_entry_data(&data_no_message);
+        assert!(hash.is_none());
     }
 }

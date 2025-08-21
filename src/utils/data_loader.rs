@@ -164,10 +164,7 @@ fn deduplicate_entries(
 
         for entry in entries {
             // Check for duplicate only when both IDs exist
-            if let Some(message) = &entry.data.message
-                && let (Some(msg_id), Some(req_id)) = (&message.id, &entry.data.request_id)
-            {
-                let hash = UniqueHash::from_ids(msg_id, req_id);
+            if let Some(hash) = UniqueHash::from_usage_entry_data(&entry.data) {
                 if hashes.contains(&hash) {
                     continue;
                 }
