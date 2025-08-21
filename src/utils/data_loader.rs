@@ -29,20 +29,28 @@ impl FilterBoundaries {
             .unwrap()
             .and_local_timezone(Local)
             .unwrap()
-            .with_timezone(&Utc)
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            .with_timezone(&Utc);
 
-        // Session block duration ago (for session blocks - ensures we get the current block)
-        let session_block_ago = Utc::now()
+        // To avoid cutting session blocks in half, go back one full session block
+        // before today's start. This ensures we capture complete session blocks
+        // that might span across midnight.
+        let safe_today_cutoff = today_start
             .checked_sub_signed(SESSION_BLOCK_DURATION)
             .unwrap()
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
-        // Use the earlier timestamp as the cutoff
-        let cutoff_timestamp = if today_start < session_block_ago {
-            today_start
+        // Also ensure we get at least 2 session blocks from current time
+        // (current block + previous block for proper cost calculation)
+        let minimum_lookback = Utc::now()
+            .checked_sub_signed(SESSION_BLOCK_DURATION * 2)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+        // Use the earlier timestamp as the cutoff to ensure complete data
+        let cutoff_timestamp = if safe_today_cutoff < minimum_lookback {
+            safe_today_cutoff
         } else {
-            session_block_ago
+            minimum_lookback
         };
 
         Self { cutoff_timestamp }
