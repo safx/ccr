@@ -5,6 +5,18 @@ use crate::constants::SESSION_BLOCK_DURATION;
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
 
+/// Type alias for parsed entry with timestamp and reference to original entry
+type ParsedEntry<'a> = (DateTime<Utc>, &'a UsageEntry);
+
+/// Parse a UsageEntry and extract its timestamp
+fn parse_entry_timestamp(entry: &UsageEntry) -> Option<DateTime<Utc>> {
+    entry
+        .data
+        .timestamp
+        .as_ref()
+        .and_then(|t| t.parse::<DateTime<Utc>>().ok())
+}
+
 #[derive(Debug, Clone)]
 pub enum SessionBlock {
     /// Idle period between sessions
@@ -183,22 +195,21 @@ impl MergedUsageSnapshot {
             return Vec::new();
         }
 
-        let now = Local::now().with_timezone(&Utc);
-        let mut blocks = Vec::new();
-        let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
+        // Phase 1: Parse and deduplicate entries
+        let parsed_entries = self.preprocess_entries();
 
-        let mut current_block_start: Option<DateTime<Utc>> = None;
-        let mut current_block_entries: Vec<UsageEntry> = Vec::new();
-        let mut last_entry_time: Option<DateTime<Utc>> = None;
+        // Phase 2: Build session blocks
+        self.build_session_blocks(parsed_entries)
+    }
+
+    /// Preprocess entries: parse timestamps and deduplicate
+    fn preprocess_entries(&self) -> Vec<ParsedEntry<'_>> {
+        let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
+        let mut parsed_entries = Vec::new();
 
         for entry in self.all_entries.iter() {
-            // Parse timestamp
-            let Some(entry_time) = entry
-                .data
-                .timestamp
-                .as_ref()
-                .and_then(|t| t.parse::<DateTime<Utc>>().ok())
-            else {
+            // Parse timestamp - skip if invalid
+            let Some(timestamp) = parse_entry_timestamp(entry) else {
                 continue;
             };
 
@@ -210,62 +221,70 @@ impl MergedUsageSnapshot {
                 processed_hashes.insert(hash);
             }
 
-            if current_block_start.is_none() {
-                // Start first block
-                current_block_start = Some(floor_to_hour(entry_time));
-                current_block_entries.push(entry.clone());
-                last_entry_time = Some(entry_time);
-            } else {
-                let block_start = current_block_start.unwrap();
-                let time_since_block_start = entry_time.signed_duration_since(block_start);
-                let time_since_last_entry = if let Some(last_time) = last_entry_time {
-                    entry_time.signed_duration_since(last_time)
-                } else {
-                    Duration::zero()
-                };
+            parsed_entries.push((timestamp, entry));
+        }
 
-                // Check if we need to end the current block
-                if time_since_block_start > SESSION_BLOCK_DURATION
-                    || time_since_last_entry > SESSION_BLOCK_DURATION
-                {
-                    // Create and save the current block
-                    let last_time = last_entry_time.unwrap();
-                    blocks.push(SessionBlock::new(
-                        block_start,
-                        current_block_entries.clone(),
-                        last_time,
-                        now,
+        parsed_entries
+    }
+
+    /// Build session blocks from parsed entries
+    fn build_session_blocks(&self, parsed_entries: Vec<ParsedEntry<'_>>) -> Vec<SessionBlock> {
+        if parsed_entries.is_empty() {
+            return Vec::new();
+        }
+
+        let now = Local::now().with_timezone(&Utc);
+        let mut blocks = Vec::new();
+
+        // Get the first entry to initialize
+        let (first_timestamp, first_entry) = parsed_entries[0];
+        let mut current_block_start = floor_to_hour(first_timestamp);
+        let mut current_block_entries = vec![(*first_entry).clone()];
+        let mut last_entry_time = first_timestamp;
+
+        // Process remaining entries
+        for &(timestamp, entry) in parsed_entries.iter().skip(1) {
+            let time_since_block_start = timestamp.signed_duration_since(current_block_start);
+            let time_since_last_entry = timestamp.signed_duration_since(last_entry_time);
+
+            // Check if we need to end the current block
+            if time_since_block_start > SESSION_BLOCK_DURATION
+                || time_since_last_entry > SESSION_BLOCK_DURATION
+            {
+                // Create and save the current block
+                blocks.push(SessionBlock::new(
+                    current_block_start,
+                    current_block_entries.clone(),
+                    last_entry_time,
+                    now,
+                ));
+
+                // If there's an idle period, create an idle block
+                if time_since_last_entry > SESSION_BLOCK_DURATION {
+                    blocks.push(SessionBlock::idle(
+                        last_entry_time + SESSION_BLOCK_DURATION,
+                        timestamp,
                     ));
-
-                    // If there's an idle period, create an idle block
-                    if time_since_last_entry > SESSION_BLOCK_DURATION {
-                        blocks.push(SessionBlock::idle(
-                            last_time + SESSION_BLOCK_DURATION,
-                            entry_time,
-                        ));
-                    }
-
-                    // Start new block
-                    current_block_start = Some(floor_to_hour(entry_time));
-                    current_block_entries = vec![entry.clone()];
-                } else {
-                    // Add to current block
-                    current_block_entries.push(entry.clone());
                 }
 
-                last_entry_time = Some(entry_time);
+                // Start new block
+                current_block_start = floor_to_hour(timestamp);
+                current_block_entries = vec![(*entry).clone()];
+            } else {
+                // Add to current block
+                current_block_entries.push((*entry).clone());
             }
+
+            last_entry_time = timestamp;
         }
 
-        // Create the final block if there are remaining entries
-        if !current_block_entries.is_empty() {
-            blocks.push(SessionBlock::new(
-                current_block_start.unwrap(),
-                current_block_entries,
-                last_entry_time.unwrap(),
-                now,
-            ));
-        }
+        // Create the final block with remaining entries
+        blocks.push(SessionBlock::new(
+            current_block_start,
+            current_block_entries,
+            last_entry_time,
+            now,
+        ));
 
         blocks
     }
