@@ -24,7 +24,7 @@ impl ContextTokens {
     }
 
     /// Calculate usage percentage and actual max tokens
-    pub fn calculate_percentage(&self) -> (usize, usize) {
+    fn calculate_percentage(&self) -> (usize, usize) {
         let max_output_tokens = env::var("CLAUDE_CODE_MAX_OUTPUT_TOKENS")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())

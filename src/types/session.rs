@@ -135,7 +135,7 @@ pub struct MergedUsageSnapshot {
 impl MergedUsageSnapshot {
     /// Returns a slice of today's entries from all_entries
     /// Uses binary search since all_entries is sorted by timestamp
-    pub fn today_entries(&self) -> &[UsageEntry] {
+    fn today_entries(&self) -> &[UsageEntry] {
         if self.all_entries.is_empty() {
             return &self.all_entries;
         }
@@ -178,7 +178,7 @@ impl MergedUsageSnapshot {
 
     /// Identify session blocks from the snapshot's sorted entries
     /// This matches the TypeScript implementation in ccusage
-    pub fn session_blocks(&self) -> Vec<SessionBlock> {
+    fn session_blocks(&self) -> Vec<SessionBlock> {
         if self.all_entries.is_empty() {
             return Vec::new();
         }

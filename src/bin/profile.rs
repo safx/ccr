@@ -60,9 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Identify blocks
     let t7 = Instant::now();
-    let blocks = snapshot.session_blocks();
+    let blocks = snapshot.active_block();
     eprintln!("6. Identify blocks: {:?}", t7.elapsed());
-    eprintln!("   Blocks: {}", blocks.len());
+    eprintln!("   Blocks: {:?}", blocks);
 
     // Git branch
     let t8 = Instant::now();
