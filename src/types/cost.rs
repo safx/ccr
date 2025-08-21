@@ -1,4 +1,4 @@
-use crate::types::{ModelPricing, SessionBlock, TokenUsage, UsageEntry};
+use crate::types::{ModelPricing, SessionBlock, UsageEntry};
 use std::fmt;
 
 /// A newtype wrapper for cost values in USD
@@ -82,25 +82,28 @@ fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
         && let Some(model_id) = message.model.as_ref().or(entry.data.model.as_ref())
     {
         let pricing = ModelPricing::from(model_id);
-        
+
         // Calculate cost based on whether we have the new cache_creation field
         if let Some(cache_creation) = &usage.cache_creation {
             // New format: calculate 5m and 1h cache separately with different prices
             let cost = usage.input_tokens.unwrap_or(0) as f64 * pricing.input_cost_per_token
                 + usage.output_tokens.unwrap_or(0) as f64 * pricing.output_cost_per_token
-                + cache_creation.ephemeral_5m_input_tokens.unwrap_or(0) as f64 * pricing.cache_creation_input_token_cost
-                + cache_creation.ephemeral_1h_input_tokens.unwrap_or(0) as f64 * pricing.cache_creation_1h_token_cost
-                + usage.cache_read_input_tokens.unwrap_or(0) as f64 * pricing.cache_read_input_token_cost;
+                + cache_creation.ephemeral_5m_input_tokens.unwrap_or(0) as f64
+                    * pricing.cache_creation_input_token_cost
+                + cache_creation.ephemeral_1h_input_tokens.unwrap_or(0) as f64
+                    * pricing.cache_creation_1h_token_cost
+                + usage.cache_read_input_tokens.unwrap_or(0) as f64
+                    * pricing.cache_read_input_token_cost;
             return cost;
         } else {
-            // Old format: use traditional calculation
-            let tokens = TokenUsage {
-                input_tokens: usage.input_tokens.unwrap_or(0),
-                output_tokens: usage.output_tokens.unwrap_or(0),
-                cache_creation_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
-                cache_read_tokens: usage.cache_read_input_tokens.unwrap_or(0),
-            };
-            return tokens.calculate_cost(&pricing);
+            // Old format: direct calculation
+            let cost = usage.input_tokens.unwrap_or(0) as f64 * pricing.input_cost_per_token
+                + usage.output_tokens.unwrap_or(0) as f64 * pricing.output_cost_per_token
+                + usage.cache_creation_input_tokens.unwrap_or(0) as f64
+                    * pricing.cache_creation_input_token_cost
+                + usage.cache_read_input_tokens.unwrap_or(0) as f64
+                    * pricing.cache_read_input_token_cost;
+            return cost;
         }
     }
 

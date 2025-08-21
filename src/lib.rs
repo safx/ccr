@@ -7,7 +7,7 @@ pub mod utils;
 pub use types::ids::ModelId;
 pub use types::{
     BurnRate, ContextTokens, Cost, MergedUsageSnapshot, Message, ModelPricing, RemainingTime,
-    SessionBlock, StatuslineHookJson, TokenUsage, UniqueHash, Usage, UsageEntry, UsageEntryData,
+    SessionBlock, StatuslineHookJson, UniqueHash, Usage, UsageEntry, UsageEntryData,
 };
 
 #[cfg(test)]

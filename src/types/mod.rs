@@ -15,7 +15,7 @@ pub use ids::{MessageId, RequestId, SessionId, UniqueHash};
 pub use input::{
     Model, StatuslineHookJson, TranscriptMessage, TranscriptMessageContent, TranscriptUsage,
 };
-pub use pricing::{ModelPricing, TokenUsage};
+pub use pricing::ModelPricing;
 pub use remaining_time::RemainingTime;
 pub use session::{MergedUsageSnapshot, SessionBlock};
 pub use usage::{Message, Usage, UsageEntry, UsageEntryData};

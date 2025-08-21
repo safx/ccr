@@ -39,6 +39,8 @@ async fn main() -> Result<()> {
         load_transcript_usage(Path::new(&hook_data.transcript_path))
     );
 
+    let lines_info_str = lines_info(&hook_data);
+
     let context_tokens = transcript_usage
         .as_ref()
         .map(ccr::ContextTokens::from_usage);
@@ -63,7 +65,7 @@ async fn main() -> Result<()> {
 
     // Build and print status line
     println!(
-        "{reset_color}{current_dir}{branch} 👤 {model}{output_style}{reset_color}{remaining} 💰 {today} today, {session} session{block}{burn_rate}{context}",
+        "{reset_color}{current_dir}{branch} 👤 {model}{output_style}{reset_color}{remaining} 💰 {today} today, {session} session{block}{burn_rate}{context}{lines}",
         reset_color = "\x1b[0m",
         current_dir = get_current_dir(&hook_data.cwd),
         branch = if let Some(branch) = git_branch {
@@ -101,6 +103,7 @@ async fn main() -> Result<()> {
         } else {
             String::new()
         },
+        lines = lines_info_str,
     );
 
     Ok(())
@@ -123,4 +126,32 @@ fn get_current_dir(cwd: &str) -> ColoredString {
         .and_then(|n| n.to_str())
         .unwrap_or(cwd)
         .green()
+}
+
+// Format lines added/removed
+fn lines_info(hook_data: &StatuslineHookJson) -> String {
+    if let Some(ref cost_info) = hook_data.cost {
+        let mut parts = Vec::new();
+        if cost_info.total_lines_added > 0 {
+            parts.push(
+                format!("+{}", cost_info.total_lines_added)
+                    .green()
+                    .to_string(),
+            );
+        }
+        if cost_info.total_lines_removed > 0 {
+            parts.push(
+                format!("-{}", cost_info.total_lines_removed)
+                    .red()
+                    .to_string(),
+            );
+        }
+        if !parts.is_empty() {
+            format!(" ✏️ {}", parts.join(" "))
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    }
 }
