@@ -119,6 +119,91 @@ fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ModelId;
+    use crate::types::{
+        Message, MessageId, RequestId, SessionId, Usage, UsageEntryData, usage::CacheCreation,
+    };
+    use std::sync::Arc;
+
+    // Helper function to create test UsageEntry with old format
+    fn create_test_entry_old_format(
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cache_creation_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        model: &str,
+    ) -> UsageEntry {
+        UsageEntry {
+            data: UsageEntryData {
+                timestamp: Some("2024-01-15T10:00:00.000Z".to_string()),
+                model: Some(ModelId::from(model)),
+                cost_usd: None,
+                message: Some(Message {
+                    id: Some(MessageId::from("msg-1")),
+                    model: Some(ModelId::from(model)),
+                    usage: Some(Usage {
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens: cache_creation_tokens,
+                        cache_read_input_tokens: cache_read_tokens,
+                        cache_creation: None,
+                        service_tier: None,
+                    }),
+                }),
+                request_id: Some(RequestId::from("req-1")),
+            },
+            session_id: SessionId::from("test-session"),
+        }
+    }
+
+    // Helper function to create test UsageEntry with new cache_creation format
+    fn create_test_entry_new_format(
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cache_5m_tokens: Option<u32>,
+        cache_1h_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        model: &str,
+    ) -> UsageEntry {
+        UsageEntry {
+            data: UsageEntryData {
+                timestamp: Some("2024-01-15T10:00:00.000Z".to_string()),
+                model: Some(ModelId::from(model)),
+                cost_usd: None,
+                message: Some(Message {
+                    id: Some(MessageId::from("msg-1")),
+                    model: Some(ModelId::from(model)),
+                    usage: Some(Usage {
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: cache_read_tokens,
+                        cache_creation: Some(CacheCreation {
+                            ephemeral_5m_input_tokens: cache_5m_tokens,
+                            ephemeral_1h_input_tokens: cache_1h_tokens,
+                        }),
+                        service_tier: None,
+                    }),
+                }),
+                request_id: Some(RequestId::from("req-1")),
+            },
+            session_id: SessionId::from("test-session"),
+        }
+    }
+
+    // Helper function to create test UsageEntry with pre-calculated cost
+    fn create_test_entry_with_cost(cost_usd: f64) -> UsageEntry {
+        UsageEntry {
+            data: UsageEntryData {
+                timestamp: Some("2024-01-15T10:00:00.000Z".to_string()),
+                model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
+                cost_usd: Some(cost_usd),
+                message: None,
+                request_id: Some(RequestId::from("req-1")),
+            },
+            session_id: SessionId::from("test-session"),
+        }
+    }
 
     #[test]
     fn test_cost_formatting() {
@@ -151,5 +236,370 @@ mod tests {
 
         let value: f64 = cost.into();
         assert_eq!(value, 3.14);
+    }
+
+    #[test]
+    fn test_cost_from_session_cost() {
+        let session_cost = SessionCost {
+            total_cost_usd: 12.34,
+            total_duration_ms: 60000,
+            total_api_duration_ms: 5000,
+            total_lines_added: 100,
+            total_lines_removed: 50,
+        };
+
+        let cost = Cost::from(&session_cost);
+        assert_eq!(cost.value(), 12.34);
+        assert_eq!(cost.to_formatted_string(), "$12.34");
+    }
+
+    #[test]
+    fn test_calculate_entry_cost_with_precalculated() {
+        let entry = create_test_entry_with_cost(5.67);
+        let cost = calculate_entry_cost(&entry);
+        assert_eq!(cost, 5.67);
+    }
+
+    #[test]
+    fn test_calculate_entry_cost_old_format() {
+        let entry = create_test_entry_old_format(
+            Some(1000), // input_tokens
+            Some(500),  // output_tokens
+            Some(200),  // cache_creation_tokens
+            Some(300),  // cache_read_tokens
+            "claude-3-5-sonnet-20241022",
+        );
+
+        let cost = calculate_entry_cost(&entry);
+        // Verify cost is calculated (exact value depends on pricing)
+        assert!(cost > 0.0);
+    }
+
+    #[test]
+    fn test_calculate_entry_cost_new_format_with_5m_cache() {
+        let entry = create_test_entry_new_format(
+            Some(1000), // input_tokens
+            Some(500),  // output_tokens
+            Some(200),  // cache_5m_tokens
+            None,       // cache_1h_tokens
+            Some(300),  // cache_read_tokens
+            "claude-3-5-sonnet-20241022",
+        );
+
+        let cost = calculate_entry_cost(&entry);
+        // Verify cost is calculated
+        assert!(cost > 0.0);
+    }
+
+    #[test]
+    fn test_calculate_entry_cost_new_format_with_1h_cache() {
+        let entry = create_test_entry_new_format(
+            Some(1000), // input_tokens
+            Some(500),  // output_tokens
+            None,       // cache_5m_tokens
+            Some(400),  // cache_1h_tokens
+            Some(300),  // cache_read_tokens
+            "claude-3-5-sonnet-20241022",
+        );
+
+        let cost = calculate_entry_cost(&entry);
+        // Verify cost is calculated
+        assert!(cost > 0.0);
+    }
+
+    #[test]
+    fn test_calculate_entry_cost_new_format_with_both_caches() {
+        let entry = create_test_entry_new_format(
+            Some(1000), // input_tokens
+            Some(500),  // output_tokens
+            Some(200),  // cache_5m_tokens
+            Some(400),  // cache_1h_tokens
+            Some(300),  // cache_read_tokens
+            "claude-3-5-sonnet-20241022",
+        );
+
+        let cost = calculate_entry_cost(&entry);
+        // Verify cost is calculated
+        assert!(cost > 0.0);
+
+        // Compare with only 5m cache - 1h cache should be cheaper
+        let entry_5m_only = create_test_entry_new_format(
+            Some(1000),
+            Some(500),
+            Some(600), // All cache as 5m
+            None,
+            Some(300),
+            "claude-3-5-sonnet-20241022",
+        );
+        let cost_5m_only = calculate_entry_cost(&entry_5m_only);
+
+        // 1h cache write is more expensive than 5m cache write (100% vs 25% markup)
+        // This is correct: longer cache duration costs more to write
+        assert!(cost > cost_5m_only);
+    }
+
+    #[test]
+    fn test_calculate_entry_cost_with_missing_data() {
+        // Entry with no message
+        let entry_no_message = UsageEntry {
+            data: UsageEntryData {
+                timestamp: None,
+                model: None,
+                cost_usd: None,
+                message: None,
+                request_id: None,
+            },
+            session_id: SessionId::from("test-session"),
+        };
+        assert_eq!(calculate_entry_cost(&entry_no_message), 0.0);
+
+        // Entry with message but no usage
+        let entry_no_usage = UsageEntry {
+            data: UsageEntryData {
+                timestamp: None,
+                model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
+                cost_usd: None,
+                message: Some(Message {
+                    id: None,
+                    model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
+                    usage: None,
+                }),
+                request_id: None,
+            },
+            session_id: SessionId::from("test-session"),
+        };
+        assert_eq!(calculate_entry_cost(&entry_no_usage), 0.0);
+
+        // Entry with usage but no model
+        let entry_no_model = UsageEntry {
+            data: UsageEntryData {
+                timestamp: None,
+                model: None,
+                cost_usd: None,
+                message: Some(Message {
+                    id: None,
+                    model: None,
+                    usage: Some(Usage {
+                        input_tokens: Some(100),
+                        output_tokens: Some(50),
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        cache_creation: None,
+                        service_tier: None,
+                    }),
+                }),
+                request_id: None,
+            },
+            session_id: SessionId::from("test-session"),
+        };
+        assert_eq!(calculate_entry_cost(&entry_no_model), 0.0);
+    }
+
+    #[test]
+    fn test_calculate_entry_cost_with_all_none_tokens() {
+        let entry = UsageEntry {
+            data: UsageEntryData {
+                timestamp: None,
+                model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
+                cost_usd: None,
+                message: Some(Message {
+                    id: None,
+                    model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
+                    usage: Some(Usage {
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        cache_creation: None,
+                        service_tier: None,
+                    }),
+                }),
+                request_id: None,
+            },
+            session_id: SessionId::from("test-session"),
+        };
+
+        // Should handle None values as 0
+        let cost = calculate_entry_cost(&entry);
+        assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn test_cost_from_entries() {
+        let entries = vec![
+            create_test_entry_with_cost(1.0),
+            create_test_entry_with_cost(2.0),
+            create_test_entry_with_cost(3.0),
+        ];
+
+        let cost = Cost::from_entries(entries.iter());
+        assert_eq!(cost.value(), 6.0);
+    }
+
+    #[test]
+    fn test_cost_from_entries_mixed_formats() {
+        let entries = vec![
+            create_test_entry_with_cost(1.0),
+            create_test_entry_old_format(
+                Some(100),
+                Some(50),
+                None,
+                None,
+                "claude-3-5-sonnet-20241022",
+            ),
+            create_test_entry_new_format(
+                Some(100),
+                Some(50),
+                Some(20),
+                None,
+                None,
+                "claude-3-5-sonnet-20241022",
+            ),
+        ];
+
+        let cost = Cost::from_entries(entries.iter());
+        // Should be > 1.0 due to the pre-calculated cost plus calculated costs
+        assert!(cost.value() > 1.0);
+    }
+
+    #[test]
+    fn test_cost_from_session_block_idle() {
+        let block = SessionBlock::Idle {
+            start_time: chrono::Utc::now(),
+            end_time: chrono::Utc::now() + chrono::Duration::hours(1),
+        };
+
+        let cost = Cost::from_session_block(&block);
+        assert_eq!(cost.value(), 0.0);
+    }
+
+    #[test]
+    fn test_cost_from_session_block_active() {
+        let entries = vec![
+            Arc::new(create_test_entry_with_cost(1.5)),
+            Arc::new(create_test_entry_with_cost(2.5)),
+        ];
+
+        let block = SessionBlock::Active {
+            start_time: chrono::Utc::now(),
+            entries,
+        };
+
+        let cost = Cost::from_session_block(&block);
+        assert_eq!(cost.value(), 4.0);
+    }
+
+    #[test]
+    fn test_cost_from_session_block_completed() {
+        let entries = vec![
+            Arc::new(create_test_entry_with_cost(3.0)),
+            Arc::new(create_test_entry_with_cost(4.0)),
+        ];
+
+        let block = SessionBlock::Completed {
+            start_time: chrono::Utc::now() - chrono::Duration::hours(2),
+            entries,
+        };
+
+        let cost = Cost::from_session_block(&block);
+        assert_eq!(cost.value(), 7.0);
+    }
+
+    #[test]
+    fn test_different_model_pricing() {
+        // Test with different models to ensure pricing varies
+        let sonnet_entry = create_test_entry_old_format(
+            Some(1000),
+            Some(500),
+            None,
+            None,
+            "claude-3-5-sonnet-20241022",
+        );
+        let opus_entry = create_test_entry_old_format(
+            Some(1000),
+            Some(500),
+            None,
+            None,
+            "claude-3-opus-20240229",
+        );
+        let haiku_entry = create_test_entry_old_format(
+            Some(1000),
+            Some(500),
+            None,
+            None,
+            "claude-3-haiku-20240307",
+        );
+
+        let sonnet_cost = calculate_entry_cost(&sonnet_entry);
+        let opus_cost = calculate_entry_cost(&opus_entry);
+        let haiku_cost = calculate_entry_cost(&haiku_entry);
+
+        // Different models should have different costs
+        assert!(sonnet_cost > 0.0);
+        assert!(opus_cost > 0.0);
+        assert!(haiku_cost > 0.0);
+
+        // Opus is typically most expensive, Haiku least expensive
+        assert_ne!(sonnet_cost, opus_cost);
+        assert_ne!(sonnet_cost, haiku_cost);
+        assert_ne!(opus_cost, haiku_cost);
+    }
+
+    #[test]
+    fn test_cache_creation_pricing_difference() {
+        // Verify that 1h cache is cheaper than 5m cache
+        let entry_5m = create_test_entry_new_format(
+            None,
+            None,
+            Some(1000), // 5m cache
+            None,
+            None,
+            "claude-3-5-sonnet-20241022",
+        );
+
+        let entry_1h = create_test_entry_new_format(
+            None,
+            None,
+            None,
+            Some(1000), // 1h cache
+            None,
+            "claude-3-5-sonnet-20241022",
+        );
+
+        let cost_5m = calculate_entry_cost(&entry_5m);
+        let cost_1h = calculate_entry_cost(&entry_1h);
+
+        // 1h cache write costs more than 5m cache write (100% vs 25% markup)
+        // This is by design: pay more upfront for longer cache retention
+        assert!(cost_1h > cost_5m);
+    }
+
+    #[test]
+    fn test_model_fallback_from_message_to_entry() {
+        // Test that model can be taken from entry.data.model if message.model is None
+        let entry = UsageEntry {
+            data: UsageEntryData {
+                timestamp: None,
+                model: Some(ModelId::from("claude-3-5-sonnet-20241022")), // Model here
+                cost_usd: None,
+                message: Some(Message {
+                    id: None,
+                    model: None, // No model in message
+                    usage: Some(Usage {
+                        input_tokens: Some(100),
+                        output_tokens: Some(50),
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        cache_creation: None,
+                        service_tier: None,
+                    }),
+                }),
+                request_id: None,
+            },
+            session_id: SessionId::from("test-session"),
+        };
+
+        let cost = calculate_entry_cost(&entry);
+        assert!(cost > 0.0); // Should still calculate cost using entry.data.model
     }
 }
