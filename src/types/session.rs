@@ -334,7 +334,7 @@ mod tests {
                 model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
                 cost_usd: None,
                 message: Some(Message {
-                    id: message_id.map(|id| MessageId::from(id)),
+                    id: message_id.map(MessageId::from),
                     model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
                     usage: Some(Usage {
                         input_tokens,
@@ -345,7 +345,7 @@ mod tests {
                         service_tier: None,
                     }),
                 }),
-                request_id: request_id.map(|id| RequestId::from(id)),
+                request_id: request_id.map(RequestId::from),
             },
             session_id: SessionId::from(session_id),
         })
@@ -841,6 +841,6 @@ mod tests {
 
         // The behavior depends on whether exactly 5 hours is considered same or different block
         // This test documents the actual behavior
-        assert!(blocks.len() >= 1);
+        assert!(!blocks.is_empty());
     }
 }

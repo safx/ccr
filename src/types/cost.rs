@@ -243,11 +243,11 @@ mod tests {
 
     #[test]
     fn test_cost_conversions() {
-        let cost = Cost::from(3.14);
-        assert_eq!(cost.value(), 3.14);
+        let cost = Cost::from(3.25);
+        assert_eq!(cost.value(), 3.25);
 
         let value: f64 = cost.into();
-        assert_eq!(value, 3.14);
+        assert_eq!(value, 3.25);
     }
 
     #[test]

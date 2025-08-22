@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::Arc;
 
 // Macro to define string-based ID types with common implementations
 macro_rules! define_string_id {
@@ -51,8 +52,73 @@ macro_rules! define_string_id {
     };
 }
 
-// Define the common ID types using the macro
-define_string_id!(SessionId);
+// SessionId uses Arc for efficient sharing
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct SessionId(Arc<str>);
+
+// Custom Deserialize implementation for Arc<str>
+impl<'de> Deserialize<'de> for SessionId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(SessionId(Arc::from(s.as_str())))
+    }
+}
+
+// Custom Serialize implementation
+impl Serialize for SessionId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl SessionId {
+    /// Create a new ID
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(Arc::from(id.into().as_str()))
+    }
+
+    /// Get the inner string value
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume self and return the inner String
+    pub fn into_inner(self) -> String {
+        self.0.to_string()
+    }
+}
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<String> for SessionId {
+    fn from(s: String) -> Self {
+        Self(Arc::from(s.as_str()))
+    }
+}
+
+impl From<&str> for SessionId {
+    fn from(s: &str) -> Self {
+        Self(Arc::from(s))
+    }
+}
+
+impl AsRef<str> for SessionId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+// Define the other ID types using the macro
 define_string_id!(RequestId);
 define_string_id!(MessageId);
 

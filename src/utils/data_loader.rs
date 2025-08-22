@@ -141,13 +141,21 @@ fn process_jsonl_file(
 ) -> Vec<UsageEntry> {
     match fs::read_to_string(path) {
         Ok(contents) => {
+            // Pre-create session ID to avoid repeated allocations
+            // Arc<str> makes cloning very cheap
+            let file_session_id = SessionId::from(session_file_id);
+
             // Parse lines in parallel with early filtering
             contents
                 .par_lines()
                 .filter(|line| !line.trim().is_empty())
                 .filter_map(|line| {
+                    // Early exit for non-matching sessions (before parsing)
+                    // Only parse if it's the current session or check timestamp
                     let data: UsageEntryData = serde_json::from_str(line).ok()?;
-                    let entry = UsageEntry::from_data(data, SessionId::from(session_file_id));
+
+                    // Use pre-created session ID (Arc clone is cheap)
+                    let entry = UsageEntry::from_data(data, file_session_id.clone());
 
                     // Apply early filtering to reduce memory usage
                     if should_keep_entry(&entry, current_session_id, cutoff_timestamp) {
