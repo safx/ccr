@@ -1,9 +1,11 @@
 // Module declarations
 pub mod constants;
+pub mod error;
 pub mod types;
 pub mod utils;
 
 // Re-export commonly used items for backward compatibility
+pub use error::{CcrError, Result};
 pub use types::ids::ModelId;
 pub use types::{
     BurnRate, ContextTokens, Cost, MergedUsageSnapshot, Message, ModelPricing, RemainingTime,

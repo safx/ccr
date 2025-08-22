@@ -1,14 +1,12 @@
 use colored::{ColoredString, Colorize};
-use std::error::Error;
 use std::io;
 use std::path::Path;
 
 // Import from organized modules
+use ccr::Result;
+use ccr::error::CcrError;
 use ccr::types::{BurnRate, Cost, RemainingTime, StatuslineHookJson};
 use ccr::utils::{get_claude_paths, get_git_branch, load_all_data, load_transcript_usage};
-
-// Simple Result type alias
-type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,8 +26,7 @@ async fn main() -> Result<()> {
     // Check Claude paths exist
     let claude_paths = get_claude_paths();
     if claude_paths.is_empty() {
-        eprintln!("{} No Claude data directory found", "❌".red());
-        std::process::exit(1);
+        return Err(CcrError::ClaudePathNotFound);
     }
 
     // Load usage snapshot and context info

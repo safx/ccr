@@ -1,4 +1,5 @@
 use crate::constants::SESSION_BLOCK_DURATION;
+use crate::error::Result;
 use crate::types::{MergedUsageSnapshot, SessionId, UniqueHash, UsageEntry, UsageEntryData};
 use chrono::{Local, Utc};
 use rayon::prelude::*;
@@ -185,7 +186,7 @@ async fn process_base_path(
     global_hashes: Arc<Mutex<HashSet<UniqueHash>>>,
     current_session_id: SessionId,
     cutoff_timestamp: String,
-) -> Result<Vec<UsageEntry>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<UsageEntry>> {
     task::spawn_blocking(move || {
         let projects_path = base_path.join("projects");
 
@@ -217,7 +218,7 @@ async fn process_base_path(
 pub async fn load_all_data(
     claude_paths: &[PathBuf],
     session_id: &SessionId,
-) -> Result<MergedUsageSnapshot, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<MergedUsageSnapshot> {
     // Initialize shared state for deduplication
     let global_hashes: Arc<Mutex<HashSet<UniqueHash>>> =
         Arc::new(Mutex::new(HashSet::with_capacity(INITIAL_HASH_CAPACITY)));

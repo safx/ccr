@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> ccr::Result<()> {
     let paths = ccr::utils::get_claude_paths();
 
     println!("=== Deep Performance Analysis ===\n");

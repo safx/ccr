@@ -3,9 +3,11 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ccr::Result<()> {
     // Get Claude data paths
-    let home = env::var("HOME")?;
+    let home = env::var("HOME").map_err(|_| ccr::CcrError::EnvVarMissing {
+        var: "HOME".to_string(),
+    })?;
     let claude_paths = vec![
         PathBuf::from(format!("{}/.claude", home)),
         PathBuf::from(format!("{}/Library/Application Support/Claude", home)),

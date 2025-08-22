@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> ccr::Result<()> {
     let input = r#"{"session_id": "default__1736909592942__90409ed3-b637-492f-ac55-28bb9e837e8f", "cwd": "/Users/mac/src/_mydev/ccr", "transcript_path": "/tmp/test_transcript.jsonl", "model": {"display_name": "Claude Opus 4.1"}}"#;
 
     let total_start = Instant::now();
