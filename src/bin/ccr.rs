@@ -49,7 +49,13 @@ async fn main() -> Result<()> {
 
     // Calculate metrics from the snapshot
     let today_cost = usage_snapshot.today_cost();
-    let session_cost = usage_snapshot.session_cost(&hook_data.session_id);
+
+    // Use API cost if available, otherwise calculate from usage data
+    let session_cost = hook_data
+        .cost
+        .as_ref()
+        .map(Cost::from)
+        .unwrap_or_else(|| usage_snapshot.session_cost(&hook_data.session_id));
 
     // Calculate active block
     let (block_cost, burn_rate, remaining_time) = if let Some(block) = usage_snapshot.active_block()

@@ -1,4 +1,4 @@
-use crate::types::{ModelPricing, SessionBlock, UsageEntry};
+use crate::types::{ModelPricing, SessionBlock, UsageEntry, input::SessionCost};
 use std::fmt;
 
 /// A newtype wrapper for cost values in USD
@@ -66,6 +66,12 @@ impl From<f64> for Cost {
 impl From<Cost> for f64 {
     fn from(cost: Cost) -> Self {
         cost.0
+    }
+}
+
+impl From<&SessionCost> for Cost {
+    fn from(session_cost: &SessionCost) -> Self {
+        Cost(session_cost.total_cost_usd)
     }
 }
 
