@@ -53,8 +53,28 @@ macro_rules! define_string_id {
 }
 
 // SessionId uses Arc for efficient sharing
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone)]
 pub struct SessionId(Arc<str>);
+
+// Custom PartialEq implementation with pointer comparison optimization
+impl PartialEq for SessionId {
+    fn eq(&self, other: &Self) -> bool {
+        // First try pointer comparison (very fast)
+        Arc::ptr_eq(&self.0, &other.0)
+            // Fall back to string comparison if pointers differ
+            || self.0.as_ref() == other.0.as_ref()
+    }
+}
+
+impl Eq for SessionId {}
+
+// Custom Hash implementation to match PartialEq behavior
+impl std::hash::Hash for SessionId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash the string content, not the pointer
+        self.0.as_ref().hash(state);
+    }
+}
 
 // Custom Deserialize implementation for Arc<str>
 impl<'de> Deserialize<'de> for SessionId {
@@ -91,6 +111,19 @@ impl SessionId {
     /// Consume self and return the inner String
     pub fn into_inner(self) -> String {
         self.0.to_string()
+    }
+
+    /// Fast equality check using pointer comparison first
+    /// This is the same as == but makes the optimization explicit
+    #[inline(always)]
+    pub fn fast_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || self.0.as_ref() == other.0.as_ref()
+    }
+
+    /// Check if two SessionIds share the same memory (pointer equality)
+    #[inline(always)]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -274,6 +307,31 @@ impl std::str::FromStr for ModelId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_session_id_ptr_equality() {
+        let id1 = SessionId::from("test-session");
+        let id2 = id1.clone(); // Same Arc
+        let id3 = SessionId::from("test-session"); // Different Arc, same content
+        let id4 = SessionId::from("other-session");
+
+        // Cloned IDs share the same memory
+        assert!(id1.ptr_eq(&id2));
+        assert!(id1 == id2);
+
+        // Different Arcs with same content
+        assert!(!id1.ptr_eq(&id3));
+        assert!(id1 == id3); // But still equal
+
+        // Different content
+        assert!(!id1.ptr_eq(&id4));
+        assert!(id1 != id4);
+
+        // fast_eq should work the same as ==
+        assert!(id1.fast_eq(&id2));
+        assert!(id1.fast_eq(&id3));
+        assert!(!id1.fast_eq(&id4));
+    }
 
     #[test]
     fn test_unique_hash_from_usage_entry_data() {
