@@ -156,12 +156,14 @@ fn process_jsonl_file(
 fn deduplicate_entries(
     results: Vec<Vec<UsageEntry>>,
     global_hashes: Arc<Mutex<HashSet<UniqueHash>>>,
-) -> Vec<UsageEntry> {
+) -> Result<Vec<Arc<UsageEntry>>> {
     let mut all_entries = Vec::with_capacity(ENTRIES_BATCH_CAPACITY);
 
     for entries in results {
         // Minimize lock holding time by batching operations
-        let mut hashes = global_hashes.lock().unwrap();
+        let mut hashes = global_hashes
+            .lock()
+            .map_err(|_| crate::error::CcrError::LockPoisoned)?;
 
         for entry in entries {
             // Check for duplicate only when both IDs exist
@@ -172,12 +174,12 @@ fn deduplicate_entries(
                 hashes.insert(hash);
             }
 
-            all_entries.push(entry);
+            all_entries.push(Arc::new(entry));
         }
         // Lock is automatically released here
     }
 
-    all_entries
+    Ok(all_entries)
 }
 
 /// Process all files from a single base path
@@ -186,7 +188,7 @@ async fn process_base_path(
     global_hashes: Arc<Mutex<HashSet<UniqueHash>>>,
     current_session_id: SessionId,
     cutoff_timestamp: String,
-) -> Result<Vec<UsageEntry>> {
+) -> Result<Vec<Arc<UsageEntry>>> {
     task::spawn_blocking(move || {
         let projects_path = base_path.join("projects");
 
@@ -207,7 +209,7 @@ async fn process_base_path(
             .collect();
 
         // Deduplicate entries
-        let entries = deduplicate_entries(results, global_hashes);
+        let entries = deduplicate_entries(results, global_hashes)?;
 
         Ok(entries)
     })

@@ -26,7 +26,7 @@ impl Cost {
         match block {
             SessionBlock::Idle { .. } => Cost(0.0),
             SessionBlock::Active { entries, .. } | SessionBlock::Completed { entries, .. } => {
-                Self::from_entries(entries.iter())
+                Self::from_entries(entries.iter().map(|e| e.as_ref()))
             }
         }
     }

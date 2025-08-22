@@ -48,6 +48,14 @@ pub enum CcrError {
     // Async processing
     #[error("Task failed")]
     TaskJoin(#[from] tokio::task::JoinError),
+
+    // Thread pool errors
+    #[error("Failed to initialize thread pool")]
+    ThreadPoolInit(#[source] rayon::ThreadPoolBuildError),
+
+    // Concurrency errors
+    #[error("Lock poisoned")]
+    LockPoisoned,
 }
 
 pub type Result<T> = std::result::Result<T, CcrError>;

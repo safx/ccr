@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
         .num_threads(num_cpus::get())
         .thread_name(|i| format!("ccr-worker-{}", i))
         .build_global()
-        .unwrap_or_else(|e| eprintln!("Failed to configure thread pool: {}", e));
+        .map_err(CcrError::ThreadPoolInit)?;
 
     // Force colored output even when not in a TTY
     colored::control::set_override(true);

@@ -4,9 +4,10 @@ use super::usage::UsageEntry;
 use crate::constants::SESSION_BLOCK_DURATION;
 use chrono::{DateTime, Duration, Local, Timelike, Utc};
 use std::collections::HashSet;
+use std::sync::Arc;
 
-/// Type alias for parsed entry with timestamp and reference to original entry
-type ParsedEntry<'a> = (DateTime<Utc>, &'a UsageEntry);
+/// Type alias for parsed entry with timestamp and Arc-wrapped entry
+type ParsedEntry = (DateTime<Utc>, Arc<UsageEntry>);
 
 /// Parse a UsageEntry and extract its timestamp
 fn parse_entry_timestamp(entry: &UsageEntry) -> Option<DateTime<Utc>> {
@@ -28,20 +29,20 @@ pub enum SessionBlock {
     /// Currently active session (within SESSION_BLOCK_DURATION)
     Active {
         start_time: DateTime<Utc>,
-        entries: Vec<UsageEntry>,
+        entries: Vec<Arc<UsageEntry>>,
     },
 
     /// Completed past session
     Completed {
         start_time: DateTime<Utc>,
-        entries: Vec<UsageEntry>,
+        entries: Vec<Arc<UsageEntry>>,
     },
 }
 
 impl SessionBlock {
     pub fn new(
         block_start: DateTime<Utc>,
-        entries: Vec<UsageEntry>,
+        entries: Vec<Arc<UsageEntry>>,
         last_entry_time: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Self {
@@ -83,11 +84,12 @@ impl SessionBlock {
     }
 
     #[inline(always)]
-    pub fn entries(&self) -> &[UsageEntry] {
+    pub fn entries(&self) -> Vec<&UsageEntry> {
         match self {
-            SessionBlock::Idle { .. } => &[],
-            SessionBlock::Active { entries, .. } => entries,
-            SessionBlock::Completed { entries, .. } => entries,
+            SessionBlock::Idle { .. } => vec![],
+            SessionBlock::Active { entries, .. } | SessionBlock::Completed { entries, .. } => {
+                entries.iter().map(|e| e.as_ref()).collect()
+            }
         }
     }
 
@@ -141,13 +143,13 @@ impl SessionBlock {
 /// Merged snapshot with all session data
 #[derive(Debug)]
 pub struct MergedUsageSnapshot {
-    pub all_entries: Vec<UsageEntry>,
+    pub all_entries: Vec<Arc<UsageEntry>>,
 }
 
 impl MergedUsageSnapshot {
     /// Returns a slice of today's entries from all_entries
     /// Uses binary search since all_entries is sorted by timestamp
-    fn today_entries(&self) -> &[UsageEntry] {
+    fn today_entries(&self) -> &[Arc<UsageEntry>] {
         if self.all_entries.is_empty() {
             return &self.all_entries;
         }
@@ -175,7 +177,7 @@ impl MergedUsageSnapshot {
     /// Calculate today's cost
     /// Uses today_entries() to get today's data and calculates total cost
     pub fn today_cost(&self) -> Cost {
-        Cost::from_entries(self.today_entries().iter())
+        Cost::from_entries(self.today_entries().iter().map(|e| e.as_ref()))
     }
 
     /// Calculate cost for a specific session
@@ -184,7 +186,8 @@ impl MergedUsageSnapshot {
         Cost::from_entries(
             self.all_entries
                 .iter()
-                .filter(|entry| entry.session_id == *session_id),
+                .filter(|entry| entry.session_id == *session_id)
+                .map(|e| e.as_ref()),
         )
     }
 
@@ -203,7 +206,7 @@ impl MergedUsageSnapshot {
     }
 
     /// Preprocess entries: parse timestamps and deduplicate
-    fn preprocess_entries(&self) -> Vec<ParsedEntry<'_>> {
+    fn preprocess_entries(&self) -> Vec<ParsedEntry> {
         let mut processed_hashes: HashSet<UniqueHash> = HashSet::new();
         let mut parsed_entries = Vec::new();
 
@@ -221,14 +224,14 @@ impl MergedUsageSnapshot {
                 processed_hashes.insert(hash);
             }
 
-            parsed_entries.push((timestamp, entry));
+            parsed_entries.push((timestamp, Arc::clone(entry)));
         }
 
         parsed_entries
     }
 
     /// Build session blocks from parsed entries
-    fn build_session_blocks(&self, parsed_entries: Vec<ParsedEntry<'_>>) -> Vec<SessionBlock> {
+    fn build_session_blocks(&self, parsed_entries: Vec<ParsedEntry>) -> Vec<SessionBlock> {
         if parsed_entries.is_empty() {
             return Vec::new();
         }
@@ -237,13 +240,13 @@ impl MergedUsageSnapshot {
         let mut blocks = Vec::new();
 
         // Get the first entry to initialize
-        let (first_timestamp, first_entry) = parsed_entries[0];
-        let mut current_block_start = floor_to_hour(first_timestamp);
-        let mut current_block_entries = vec![(*first_entry).clone()];
-        let mut last_entry_time = first_timestamp;
+        let (first_timestamp, first_entry) = &parsed_entries[0];
+        let mut current_block_start = floor_to_hour(*first_timestamp);
+        let mut current_block_entries = vec![Arc::clone(first_entry)];
+        let mut last_entry_time = *first_timestamp;
 
         // Process remaining entries
-        for &(timestamp, entry) in parsed_entries.iter().skip(1) {
+        for (timestamp, entry) in parsed_entries.iter().skip(1) {
             let time_since_block_start = timestamp.signed_duration_since(current_block_start);
             let time_since_last_entry = timestamp.signed_duration_since(last_entry_time);
 
@@ -254,7 +257,7 @@ impl MergedUsageSnapshot {
                 // Create and save the current block
                 blocks.push(SessionBlock::new(
                     current_block_start,
-                    current_block_entries.clone(),
+                    current_block_entries,
                     last_entry_time,
                     now,
                 ));
@@ -263,19 +266,19 @@ impl MergedUsageSnapshot {
                 if time_since_last_entry > SESSION_BLOCK_DURATION {
                     blocks.push(SessionBlock::idle(
                         last_entry_time + SESSION_BLOCK_DURATION,
-                        timestamp,
+                        *timestamp,
                     ));
                 }
 
                 // Start new block
-                current_block_start = floor_to_hour(timestamp);
-                current_block_entries = vec![(*entry).clone()];
+                current_block_start = floor_to_hour(*timestamp);
+                current_block_entries = vec![Arc::clone(entry)];
             } else {
                 // Add to current block
-                current_block_entries.push((*entry).clone());
+                current_block_entries.push(Arc::clone(entry));
             }
 
-            last_entry_time = timestamp;
+            last_entry_time = *timestamp;
         }
 
         // Create the final block with remaining entries
