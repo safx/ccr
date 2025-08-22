@@ -22,14 +22,20 @@ struct FilterBoundaries {
 
 impl FilterBoundaries {
     /// Calculate filter boundaries based on today's start and session block duration
-    fn new() -> Self {
+    /// Optimized for performance with minimal allocations
+    fn new() -> Result<Self> {
         // Today's start (in UTC for comparison with timestamps)
         let today_start = Local::now()
             .date_naive()
             .and_hms_opt(0, 0, 0)
-            .unwrap()
+            .ok_or_else(|| crate::error::CcrError::DataValidation {
+                message: "Failed to create midnight time".to_string(),
+            })?
             .and_local_timezone(Local)
-            .unwrap()
+            .single()
+            .ok_or_else(|| crate::error::CcrError::DataValidation {
+                message: "Ambiguous local time conversion".to_string(),
+            })?
             .with_timezone(&Utc);
 
         // To avoid cutting session blocks in half, go back one full session block
@@ -37,14 +43,18 @@ impl FilterBoundaries {
         // that might span across midnight.
         let safe_today_cutoff = today_start
             .checked_sub_signed(SESSION_BLOCK_DURATION)
-            .unwrap()
+            .ok_or_else(|| crate::error::CcrError::DataValidation {
+                message: "Failed to calculate cutoff timestamp".to_string(),
+            })?
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
         // Also ensure we get at least 2 session blocks from current time
         // (current block + previous block for proper cost calculation)
         let minimum_lookback = Utc::now()
             .checked_sub_signed(SESSION_BLOCK_DURATION * 2)
-            .unwrap()
+            .ok_or_else(|| crate::error::CcrError::DataValidation {
+                message: "Failed to calculate minimum lookback".to_string(),
+            })?
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
         // Use the earlier timestamp as the cutoff to ensure complete data
@@ -54,7 +64,7 @@ impl FilterBoundaries {
             minimum_lookback
         };
 
-        Self { cutoff_timestamp }
+        Ok(Self { cutoff_timestamp })
     }
 }
 
@@ -226,7 +236,7 @@ pub async fn load_all_data(
         Arc::new(Mutex::new(HashSet::with_capacity(INITIAL_HASH_CAPACITY)));
 
     // Calculate filter boundaries
-    let boundaries = FilterBoundaries::new();
+    let boundaries = FilterBoundaries::new()?;
 
     // Process each base path in parallel
     let tasks: Vec<_> = claude_paths

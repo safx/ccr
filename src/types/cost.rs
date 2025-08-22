@@ -75,6 +75,12 @@ impl From<&SessionCost> for Cost {
     }
 }
 
+/// Helper function to calculate token cost
+#[inline]
+fn calculate_token_cost(tokens: Option<u32>, cost_per_token: f64) -> f64 {
+    tokens.unwrap_or(0) as f64 * cost_per_token
+}
+
 /// Calculate cost for a single entry (private helper function)
 fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
     // First check if there's a pre-calculated cost
@@ -89,28 +95,34 @@ fn calculate_entry_cost(entry: &UsageEntry) -> f64 {
     {
         let pricing = ModelPricing::from(model_id);
 
-        // Calculate cost based on whether we have the new cache_creation field
+        // Common cost components
+        let mut cost = calculate_token_cost(usage.input_tokens, pricing.input_cost_per_token)
+            + calculate_token_cost(usage.output_tokens, pricing.output_cost_per_token)
+            + calculate_token_cost(
+                usage.cache_read_input_tokens,
+                pricing.cache_read_input_token_cost,
+            );
+
+        // Add cache creation cost based on format
         if let Some(cache_creation) = &usage.cache_creation {
             // New format: calculate 5m and 1h cache separately with different prices
-            let cost = usage.input_tokens.unwrap_or(0) as f64 * pricing.input_cost_per_token
-                + usage.output_tokens.unwrap_or(0) as f64 * pricing.output_cost_per_token
-                + cache_creation.ephemeral_5m_input_tokens.unwrap_or(0) as f64
-                    * pricing.cache_creation_input_token_cost
-                + cache_creation.ephemeral_1h_input_tokens.unwrap_or(0) as f64
-                    * pricing.cache_creation_1h_token_cost
-                + usage.cache_read_input_tokens.unwrap_or(0) as f64
-                    * pricing.cache_read_input_token_cost;
-            return cost;
+            cost += calculate_token_cost(
+                cache_creation.ephemeral_5m_input_tokens,
+                pricing.cache_creation_input_token_cost,
+            );
+            cost += calculate_token_cost(
+                cache_creation.ephemeral_1h_input_tokens,
+                pricing.cache_creation_1h_token_cost,
+            );
         } else {
             // Old format: direct calculation
-            let cost = usage.input_tokens.unwrap_or(0) as f64 * pricing.input_cost_per_token
-                + usage.output_tokens.unwrap_or(0) as f64 * pricing.output_cost_per_token
-                + usage.cache_creation_input_tokens.unwrap_or(0) as f64
-                    * pricing.cache_creation_input_token_cost
-                + usage.cache_read_input_tokens.unwrap_or(0) as f64
-                    * pricing.cache_read_input_token_cost;
-            return cost;
+            cost += calculate_token_cost(
+                usage.cache_creation_input_tokens,
+                pricing.cache_creation_input_token_cost,
+            );
         }
+
+        return cost;
     }
 
     0.0

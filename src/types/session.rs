@@ -156,14 +156,17 @@ impl MergedUsageSnapshot {
 
         // Get today's start in the same format as UsageEntry.timestamp (ISO 8601 UTC)
         // This accounts for timezone differences
+        // If time calculation fails, return all entries as fallback
         let today_start = Local::now()
             .date_naive()
             .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Local)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            .and_then(|dt| dt.and_local_timezone(Local).single())
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+            .unwrap_or_else(|| {
+                // Fallback: use a very early timestamp to include all entries
+                "1970-01-01T00:00:00.000Z".to_string()
+            });
 
         // Binary search to find the first entry of today
         // Since timestamps are ISO 8601 strings, we can compare them directly
