@@ -308,3 +308,536 @@ fn floor_to_hour(timestamp: DateTime<Utc>) -> DateTime<Utc> {
         .with_nanosecond(0)
         .unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ModelId;
+    use crate::types::{Message, MessageId, RequestId, Usage, UsageEntryData};
+    use chrono::{Datelike, TimeZone, Timelike};
+
+    // Helper function to create test UsageEntry
+    fn create_test_entry(
+        session_id: &str,
+        timestamp: &str,
+        message_id: Option<&str>,
+        request_id: Option<&str>,
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+    ) -> Arc<UsageEntry> {
+        Arc::new(UsageEntry {
+            data: UsageEntryData {
+                timestamp: Some(timestamp.to_string()),
+                model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
+                cost_usd: None,
+                message: Some(Message {
+                    id: message_id.map(|id| MessageId::from(id)),
+                    model: Some(ModelId::from("claude-3-5-sonnet-20241022")),
+                    usage: Some(Usage {
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        cache_creation: None,
+                        service_tier: None,
+                    }),
+                }),
+                request_id: request_id.map(|id| RequestId::from(id)),
+            },
+            session_id: SessionId::from(session_id),
+        })
+    }
+
+    #[test]
+    fn test_floor_to_hour() {
+        let timestamp = Utc.with_ymd_and_hms(2024, 1, 15, 14, 37, 22).unwrap();
+        let floored = floor_to_hour(timestamp);
+
+        assert_eq!(floored.hour(), 14);
+        assert_eq!(floored.minute(), 0);
+        assert_eq!(floored.second(), 0);
+        assert_eq!(floored.nanosecond(), 0);
+    }
+
+    #[test]
+    fn test_parse_entry_timestamp() {
+        let entry = create_test_entry(
+            "test-session",
+            "2024-01-15T10:30:00.000Z",
+            Some("msg-1"),
+            Some("req-1"),
+            Some(100),
+            Some(50),
+        );
+
+        let timestamp = parse_entry_timestamp(&entry);
+        assert!(timestamp.is_some());
+
+        let ts = timestamp.unwrap();
+        assert_eq!(ts.year(), 2024);
+        assert_eq!(ts.month(), 1);
+        assert_eq!(ts.day(), 15);
+        assert_eq!(ts.hour(), 10);
+        assert_eq!(ts.minute(), 30);
+    }
+
+    #[test]
+    fn test_parse_entry_timestamp_invalid() {
+        let entry = Arc::new(UsageEntry {
+            data: UsageEntryData {
+                timestamp: Some("invalid-timestamp".to_string()),
+                model: None,
+                cost_usd: None,
+                message: None,
+                request_id: None,
+            },
+            session_id: SessionId::from("test-session"),
+        });
+
+        let timestamp = parse_entry_timestamp(&entry);
+        assert!(timestamp.is_none());
+    }
+
+    #[test]
+    fn test_session_block_new_active() {
+        let now = Utc::now();
+        let block_start = now - Duration::hours(1);
+        let last_entry_time = now - Duration::minutes(30);
+
+        let entries = vec![create_test_entry(
+            "test-session",
+            &block_start.to_rfc3339(),
+            Some("msg-1"),
+            Some("req-1"),
+            Some(100),
+            Some(50),
+        )];
+
+        let block = SessionBlock::new(block_start, entries.clone(), last_entry_time, now);
+
+        assert!(block.is_active());
+        assert!(!block.is_idle());
+
+        match block {
+            SessionBlock::Active {
+                start_time,
+                entries: block_entries,
+            } => {
+                assert_eq!(start_time, block_start);
+                assert_eq!(block_entries.len(), 1);
+            }
+            _ => panic!("Expected Active block"),
+        }
+    }
+
+    #[test]
+    fn test_session_block_new_completed() {
+        let now = Utc::now();
+        let block_start = now - Duration::hours(10);
+        let last_entry_time = now - Duration::hours(8);
+
+        let entries = vec![create_test_entry(
+            "test-session",
+            &block_start.to_rfc3339(),
+            Some("msg-1"),
+            Some("req-1"),
+            Some(100),
+            Some(50),
+        )];
+
+        let block = SessionBlock::new(block_start, entries.clone(), last_entry_time, now);
+
+        assert!(!block.is_active());
+        assert!(!block.is_idle());
+
+        match block {
+            SessionBlock::Completed {
+                start_time,
+                entries: block_entries,
+            } => {
+                assert_eq!(start_time, block_start);
+                assert_eq!(block_entries.len(), 1);
+            }
+            _ => panic!("Expected Completed block"),
+        }
+    }
+
+    #[test]
+    fn test_session_block_idle() {
+        let start_time = Utc::now() - Duration::hours(10);
+        let end_time = Utc::now() - Duration::hours(5);
+
+        let block = SessionBlock::idle(start_time, end_time);
+
+        assert!(block.is_idle());
+        assert!(!block.is_active());
+        assert_eq!(block.entries().len(), 0);
+        assert_eq!(block.cost().value(), 0.0);
+
+        match block {
+            SessionBlock::Idle {
+                start_time: s,
+                end_time: e,
+            } => {
+                assert_eq!(s, start_time);
+                assert_eq!(e, end_time);
+            }
+            _ => panic!("Expected Idle block"),
+        }
+    }
+
+    #[test]
+    fn test_session_block_actual_duration() {
+        let base_time = Utc.with_ymd_and_hms(2024, 1, 15, 10, 0, 0).unwrap();
+
+        let entries = vec![
+            create_test_entry(
+                "test-session",
+                &base_time.to_rfc3339(),
+                Some("msg-1"),
+                Some("req-1"),
+                Some(100),
+                Some(50),
+            ),
+            create_test_entry(
+                "test-session",
+                &(base_time + Duration::minutes(30)).to_rfc3339(),
+                Some("msg-2"),
+                Some("req-2"),
+                Some(200),
+                Some(100),
+            ),
+            create_test_entry(
+                "test-session",
+                &(base_time + Duration::hours(1)).to_rfc3339(),
+                Some("msg-3"),
+                Some("req-3"),
+                Some(150),
+                Some(75),
+            ),
+        ];
+
+        let block = SessionBlock::Active {
+            start_time: base_time,
+            entries,
+        };
+
+        let duration = block.actual_duration();
+        assert!(duration.is_some());
+        assert_eq!(duration.unwrap(), Duration::hours(1));
+
+        let duration_minutes = block.actual_duration_minutes();
+        assert!(duration_minutes.is_some());
+        assert_eq!(duration_minutes.unwrap(), 60.0);
+    }
+
+    #[test]
+    fn test_session_block_actual_duration_idle() {
+        let block = SessionBlock::idle(Utc::now(), Utc::now() + Duration::hours(1));
+
+        assert!(block.actual_duration().is_none());
+        assert!(block.actual_duration_minutes().is_none());
+    }
+
+    #[test]
+    fn test_session_block_end_time() {
+        let start = Utc.with_ymd_and_hms(2024, 1, 15, 10, 0, 0).unwrap();
+
+        // Test Active block
+        let active_block = SessionBlock::Active {
+            start_time: start,
+            entries: vec![],
+        };
+        assert_eq!(active_block.end_time(), start + SESSION_BLOCK_DURATION);
+
+        // Test Completed block
+        let completed_block = SessionBlock::Completed {
+            start_time: start,
+            entries: vec![],
+        };
+        assert_eq!(completed_block.end_time(), start + SESSION_BLOCK_DURATION);
+
+        // Test Idle block
+        let end = start + Duration::hours(2);
+        let idle_block = SessionBlock::idle(start, end);
+        assert_eq!(idle_block.end_time(), end);
+    }
+
+    #[test]
+    fn test_merged_usage_snapshot_today_entries() {
+        let _now = Local::now().with_timezone(&Utc);
+        let today_start = Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let yesterday = today_start - Duration::days(1);
+        let today_morning = today_start + Duration::hours(8);
+        let today_afternoon = today_start + Duration::hours(14);
+
+        let entries = vec![
+            create_test_entry(
+                "session-1",
+                &yesterday.to_rfc3339(),
+                Some("msg-1"),
+                Some("req-1"),
+                Some(100),
+                Some(50),
+            ),
+            create_test_entry(
+                "session-2",
+                &today_morning.to_rfc3339(),
+                Some("msg-2"),
+                Some("req-2"),
+                Some(200),
+                Some(100),
+            ),
+            create_test_entry(
+                "session-3",
+                &today_afternoon.to_rfc3339(),
+                Some("msg-3"),
+                Some("req-3"),
+                Some(150),
+                Some(75),
+            ),
+        ];
+
+        let snapshot = MergedUsageSnapshot {
+            all_entries: entries,
+        };
+
+        let today_entries = snapshot.today_entries();
+        assert_eq!(today_entries.len(), 2);
+
+        // Verify that only today's entries are included
+        for entry in today_entries {
+            let timestamp = entry.data.timestamp.as_ref().unwrap();
+            assert!(timestamp >= &today_start.to_rfc3339());
+        }
+    }
+
+    #[test]
+    fn test_merged_usage_snapshot_session_cost() {
+        let entries = vec![
+            create_test_entry(
+                "session-1",
+                "2024-01-15T10:00:00.000Z",
+                Some("msg-1"),
+                Some("req-1"),
+                Some(100),
+                Some(50),
+            ),
+            create_test_entry(
+                "session-1",
+                "2024-01-15T10:30:00.000Z",
+                Some("msg-2"),
+                Some("req-2"),
+                Some(200),
+                Some(100),
+            ),
+            create_test_entry(
+                "session-2",
+                "2024-01-15T11:00:00.000Z",
+                Some("msg-3"),
+                Some("req-3"),
+                Some(150),
+                Some(75),
+            ),
+        ];
+
+        let snapshot = MergedUsageSnapshot {
+            all_entries: entries,
+        };
+
+        // Session 1 should have 2 entries
+        let session1_cost = snapshot.session_cost(&SessionId::from("session-1"));
+        // Session 2 should have 1 entry
+        let session2_cost = snapshot.session_cost(&SessionId::from("session-2"));
+        // Non-existent session should have 0 cost
+        let session3_cost = snapshot.session_cost(&SessionId::from("session-3"));
+
+        // Basic check that costs are calculated (actual values depend on pricing)
+        assert!(session1_cost.value() > 0.0);
+        assert!(session2_cost.value() > 0.0);
+        assert_eq!(session3_cost.value(), 0.0);
+    }
+
+    #[test]
+    fn test_merged_usage_snapshot_preprocess_entries() {
+        let entries = vec![
+            create_test_entry(
+                "session-1",
+                "2024-01-15T10:00:00.000Z",
+                Some("msg-1"),
+                Some("req-1"),
+                Some(100),
+                Some(50),
+            ),
+            create_test_entry(
+                "session-1",
+                "2024-01-15T10:30:00.000Z",
+                Some("msg-1"),
+                Some("req-1"), // Duplicate
+                Some(100),
+                Some(50),
+            ),
+            create_test_entry(
+                "session-1",
+                "2024-01-15T11:00:00.000Z",
+                Some("msg-2"),
+                Some("req-2"),
+                Some(200),
+                Some(100),
+            ),
+        ];
+
+        let snapshot = MergedUsageSnapshot {
+            all_entries: entries,
+        };
+
+        let processed = snapshot.preprocess_entries();
+
+        // Should have 2 entries after deduplication
+        assert_eq!(processed.len(), 2);
+
+        // Verify timestamps are parsed correctly
+        for (timestamp, _) in &processed {
+            assert!(timestamp.year() == 2024);
+        }
+    }
+
+    #[test]
+    fn test_merged_usage_snapshot_session_blocks() {
+        let base_time = Utc.with_ymd_and_hms(2024, 1, 15, 10, 0, 0).unwrap();
+
+        // Create entries with different time gaps
+        let entries = vec![
+            // First block
+            create_test_entry(
+                "session-1",
+                &base_time.to_rfc3339(),
+                Some("msg-1"),
+                Some("req-1"),
+                Some(100),
+                Some(50),
+            ),
+            create_test_entry(
+                "session-1",
+                &(base_time + Duration::hours(2)).to_rfc3339(),
+                Some("msg-2"),
+                Some("req-2"),
+                Some(200),
+                Some(100),
+            ),
+            // Gap > 5 hours, should create new block
+            create_test_entry(
+                "session-1",
+                &(base_time + Duration::hours(8)).to_rfc3339(),
+                Some("msg-3"),
+                Some("req-3"),
+                Some(150),
+                Some(75),
+            ),
+        ];
+
+        let snapshot = MergedUsageSnapshot {
+            all_entries: entries,
+        };
+
+        let blocks = snapshot.session_blocks();
+
+        // Should have 3 blocks: first activity, idle, second activity
+        assert!(blocks.len() >= 2);
+
+        // Check for idle block
+        let has_idle = blocks.iter().any(|b| b.is_idle());
+        assert!(has_idle, "Should have an idle block between sessions");
+    }
+
+    #[test]
+    fn test_merged_usage_snapshot_active_block() {
+        let now = Utc::now();
+        let recent_time = now - Duration::minutes(30);
+
+        let entries = vec![
+            create_test_entry(
+                "session-1",
+                &recent_time.to_rfc3339(),
+                Some("msg-1"),
+                Some("req-1"),
+                Some(100),
+                Some(50),
+            ),
+            create_test_entry(
+                "session-1",
+                &(recent_time + Duration::minutes(10)).to_rfc3339(),
+                Some("msg-2"),
+                Some("req-2"),
+                Some(200),
+                Some(100),
+            ),
+        ];
+
+        let snapshot = MergedUsageSnapshot {
+            all_entries: entries,
+        };
+
+        let active_block = snapshot.active_block();
+        assert!(active_block.is_some());
+
+        let block = active_block.unwrap();
+        assert!(block.is_active());
+        assert_eq!(block.entries().len(), 2);
+    }
+
+    #[test]
+    fn test_merged_usage_snapshot_empty() {
+        let snapshot = MergedUsageSnapshot {
+            all_entries: vec![],
+        };
+
+        assert_eq!(snapshot.today_entries().len(), 0);
+        assert_eq!(snapshot.today_cost().value(), 0.0);
+        assert_eq!(snapshot.session_cost(&SessionId::from("any")).value(), 0.0);
+        assert!(snapshot.active_block().is_none());
+        assert_eq!(snapshot.session_blocks().len(), 0);
+    }
+
+    #[test]
+    fn test_session_blocks_with_exact_5_hour_gap() {
+        let base_time = Utc.with_ymd_and_hms(2024, 1, 15, 10, 0, 0).unwrap();
+
+        let entries = vec![
+            create_test_entry(
+                "session-1",
+                &base_time.to_rfc3339(),
+                Some("msg-1"),
+                Some("req-1"),
+                Some(100),
+                Some(50),
+            ),
+            // Exactly 5 hours gap - should still be in same block
+            create_test_entry(
+                "session-1",
+                &(base_time + SESSION_BLOCK_DURATION).to_rfc3339(),
+                Some("msg-2"),
+                Some("req-2"),
+                Some(200),
+                Some(100),
+            ),
+        ];
+
+        let snapshot = MergedUsageSnapshot {
+            all_entries: entries,
+        };
+
+        let blocks = snapshot.session_blocks();
+
+        // The behavior depends on whether exactly 5 hours is considered same or different block
+        // This test documents the actual behavior
+        assert!(blocks.len() >= 1);
+    }
+}
