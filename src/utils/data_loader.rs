@@ -177,12 +177,12 @@ fn deduplicate_entries(
 ) -> Result<Vec<Arc<UsageEntry>>> {
     let mut all_entries = Vec::with_capacity(ENTRIES_BATCH_CAPACITY);
 
-    for entries in results {
-        // Minimize lock holding time by batching operations
-        let mut hashes = global_hashes
-            .lock()
-            .map_err(|_| crate::error::CcrError::LockPoisoned)?;
+    // Process all results with a single lock acquisition
+    let mut hashes = global_hashes
+        .lock()
+        .map_err(|_| crate::error::CcrError::LockPoisoned)?;
 
+    for entries in results {
         for entry in entries {
             // Check for duplicate only when both IDs exist
             if let Some(hash) = UniqueHash::from_usage_entry_data(&entry.data) {
@@ -194,22 +194,20 @@ fn deduplicate_entries(
 
             all_entries.push(Arc::new(entry));
         }
-        // Lock is automatically released here
     }
+    // Lock is automatically released here
 
     Ok(all_entries)
 }
 
-/// Process all files from a single base path
-async fn process_base_path(
-    base_path: PathBuf,
+/// Process all files from a projects directory
+async fn process_projects_directory(
+    projects_path: PathBuf,
     global_hashes: Arc<Mutex<HashSet<UniqueHash>>>,
     current_session_id: SessionId,
     cutoff_timestamp: String,
 ) -> Result<Vec<Arc<UsageEntry>>> {
     task::spawn_blocking(move || {
-        let projects_path = base_path.join("projects");
-
         // Collect all JSONL files
         let all_files = collect_jsonl_files(&projects_path);
 
@@ -246,12 +244,13 @@ pub async fn load_all_data(
     // Calculate filter boundaries
     let boundaries = FilterBoundaries::new()?;
 
-    // Process each base path in parallel
+    // Process each projects directory in parallel
     let tasks: Vec<_> = claude_paths
         .iter()
         .map(|base_path| {
-            process_base_path(
-                base_path.clone(),
+            let projects_path = base_path.join("projects");
+            process_projects_directory(
+                projects_path,
                 Arc::clone(&global_hashes),
                 session_id.clone(),
                 boundaries.cutoff_timestamp.clone(),
