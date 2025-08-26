@@ -1,0 +1,243 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: x86_64-linux
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: aarch64-linux
+            use-cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: x86_64-macos
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: aarch64-macos
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: x86_64-windows
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      
+      - name: Install cross-compilation dependencies
+        if: matrix.use-cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+      
+      - name: Build (native)
+        if: '!matrix.use-cross'
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+      
+      - name: Build (cross)
+        if: matrix.use-cross
+        run: |
+          cross build --release --target ${{ matrix.target }}
+      
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          cd target/${{ matrix.target }}/release
+          
+          # Package only ccr binary
+          tar czf ../../../ccr-${VERSION}-${{ matrix.name }}.tar.gz ccr
+          
+          cd ../../../
+          
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF -replace 'refs/tags/', ''
+          cd target/${{ matrix.target }}/release
+          
+          # Package only ccr binary
+          Compress-Archive -Path ccr.exe -DestinationPath ../../../ccr-$version-${{ matrix.name }}.zip
+          
+          cd ../../../
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.name }}
+          path: |
+            *.tar.gz
+            *.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get version
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      
+      - name: List artifacts
+        run: ls -la dist/
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Installation
+            
+            ### Homebrew (macOS/Linux)
+            ```bash
+            brew tap safx/tap
+            brew install ccr
+            ```
+            
+            ### Manual Installation
+            1. Download the appropriate binary for your platform from the assets below
+            2. Extract the archive:
+               ```bash
+               tar xzf ccr-*.tar.gz
+               ```
+            3. Move to your PATH:
+               ```bash
+               sudo mv ccr /usr/local/bin/
+               # or for user installation:
+               mv ccr ~/bin/
+               ```
+            
+            ### Claude Code Integration
+            Add to your `~/.claude/settings.json`:
+            ```json
+            {
+              "statusline_hook": "ccr"
+            }
+            ```
+            
+            ## Changes
+            See the full changelog below.
+
+  update-homebrew-tap:
+    needs: release
+    runs-on: ubuntu-latest
+    if: "!contains(github.ref, '-')"  # Skip for pre-releases
+    
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: safx/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+      
+      - name: Update Formula
+        run: |
+          cd homebrew-tap
+          VERSION=${{ needs.release.outputs.version }}
+          
+          # Download and calculate SHA256 for ccr
+          declare -A SHAS
+          
+          for platform in aarch64-macos x86_64-macos aarch64-linux x86_64-linux; do
+            URL="https://github.com/safx/ccr/releases/download/v${VERSION}/ccr-v${VERSION}-${platform}.tar.gz"
+            echo "Downloading ccr-${platform}..."
+            if curl -sL "${URL}" -o "ccr-${platform}.tar.gz"; then
+              SHA=$(shasum -a 256 "ccr-${platform}.tar.gz" | awk '{print $1}')
+              SHAS["ccr-${platform}"]=$SHA
+              rm "ccr-${platform}.tar.gz"
+            fi
+          done
+          
+          # Update ccr.rb
+          cat > Formula/ccr.rb << EOF
+          class Ccr < Formula
+            desc "Claude Code statusline hook for usage statistics and costs"
+            homepage "https://github.com/safx/ccr"
+            license "MIT"
+            version "${VERSION}"
+          
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/safx/ccr/releases/download/v${VERSION}/ccr-v${VERSION}-aarch64-macos.tar.gz"
+                sha256 "${SHAS[ccr-aarch64-macos]}"
+              else
+                url "https://github.com/safx/ccr/releases/download/v${VERSION}/ccr-v${VERSION}-x86_64-macos.tar.gz"
+                sha256 "${SHAS[ccr-x86_64-macos]}"
+              end
+            end
+          
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/safx/ccr/releases/download/v${VERSION}/ccr-v${VERSION}-aarch64-linux.tar.gz"
+                sha256 "${SHAS[ccr-aarch64-linux]}"
+              else
+                url "https://github.com/safx/ccr/releases/download/v${VERSION}/ccr-v${VERSION}-x86_64-linux.tar.gz"
+                sha256 "${SHAS[ccr-x86_64-linux]}"
+              end
+            end
+          
+            def install
+              bin.install "ccr"
+            end
+          
+            def caveats
+              <<~EOS
+                To use ccr with Claude Code, add to your ~/.claude/settings.json:
+                {
+                  "statusline_hook": "ccr"
+                }
+              EOS
+            end
+          
+            test do
+              # Test with sample input matching the expected format
+              input = '{"session_id":"test","cwd":"/tmp","transcript_path":"/dev/null","model":{"display_name":"claude-3-5-sonnet","max_output_tokens":8192}}'
+              output = pipe_output("#{bin}/ccr", input)
+              assert_match /\$/, output
+            end
+          end
+          EOF
+          
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Formula/ccr.rb
+          git commit -m "Update ccr to version ${{ needs.release.outputs.version }}" || echo "No changes to commit"
+          git push
