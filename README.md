@@ -2,20 +2,16 @@
 
 A statusline hook for Claude Code that displays usage costs and session information.
 
-## Setup
+## Installation
 
-Add to `~/.claude/settings.json`:
+### Homebrew (Recommended)
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "$HOME/bin/ccr"
-  }
-}
+```bash
+brew tap safx/tap
+brew install ccr
 ```
 
-## Installation
+### Build from source
 
 ```bash
 # Build release binary
@@ -24,6 +20,21 @@ cargo build --release
 # Copy to your bin directory
 cp target/release/ccr ~/bin/
 ```
+
+## Setup
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "ccr"
+  }
+}
+```
+
+Note: If you installed via Homebrew, `ccr` will be in your PATH. If you built from source and installed to `~/bin/`, you may need to use the full path `$HOME/bin/ccr`.
 
 ## What it displays
 
@@ -41,7 +52,7 @@ The statusline shows:
 
 Example output:
 ```
-ccr main 👤 Opus 4.1 [Learning] ⏰ 1h 18m left 💰 $63.87 today, $11.58 (api: $5.14) session, $62.35 block 🔥 $21.13/hr (api: $24.28/hr) ⚖️ 70% (108,887 / 155,000) ✏️ +23 -17
+ccr main 👤 Opus 4.1 [Learning] ⏰ 1h 18m left 💰 $63.87 today, $11.58 session, $62.35 block 🔥 $21.13/hr ⚖️ 70% (108,887 / 155,000) ✏️ +23 -17
 ```
 
 ## How it works
@@ -101,7 +112,9 @@ Two binaries are included for performance analysis:
 
 ```
 src/
-├── lib.rs                      # Library exports  
+├── lib.rs                      # Library exports
+├── constants.rs                # Shared constants  
+├── error.rs                    # Error types and handling
 ├── types/                      # Data structures and domain logic
 │   ├── mod.rs                  # Module exports
 │   ├── ids.rs                  # ID types (SessionId, MessageId, etc.)
@@ -123,7 +136,10 @@ src/
     ├── ccr.rs                  # Main statusline hook
     ├── filter_stats.rs         # Statistics filtering tool
     ├── profile.rs              # Performance profiling
-    └── profile_deep.rs         # Detailed profiling
+    ├── profile_deep.rs         # Detailed profiling
+    ├── profile_loader.rs       # Data loader profiling
+    ├── profile_micro.rs        # Micro-benchmarking tool
+    └── bench_sessionid.rs      # SessionId benchmarking
 ```
 
 ## Building from source
