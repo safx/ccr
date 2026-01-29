@@ -38,9 +38,35 @@ async fn main() -> Result<()> {
 
     let lines_info_str = lines_info(&hook_data);
 
-    let context_tokens = transcript_usage
-        .as_ref()
-        .map(ccr::ContextTokens::from_usage);
+    // Prefer API context_window if available, fallback to transcript-based calculation
+    let context_display = if let Some(ref ctx) = hook_data.context_window {
+        transcript_usage
+            .as_ref()
+            .map(|u| {
+                let tokens: ccr::ContextTokens = ccr::ContextTokens::from_usage(u);
+
+                if let Some(percentage) = ctx.used_percentage {
+                    format!(
+                        " ⚖️ {}",
+                        tokens.to_formatted_string_with_api(percentage, ctx.context_window_size)
+                    )
+                } else {
+                    format!(" ⚖️ {}", tokens.to_formatted_string())
+                }
+            })
+            .unwrap_or_default()
+    } else {
+        // No context_window field, fallback to transcript
+        transcript_usage
+            .as_ref()
+            .map(|u| {
+                format!(
+                    " ⚖️ {}",
+                    ccr::ContextTokens::from_usage(u).to_formatted_string()
+                )
+            })
+            .unwrap_or_default()
+    };
 
     let usage_snapshot = usage_snapshot?;
 
@@ -101,11 +127,7 @@ async fn main() -> Result<()> {
         } else {
             String::new()
         },
-        context = if let Some(tokens) = context_tokens {
-            format!(" ⚖️ {}", tokens.to_formatted_string())
-        } else {
-            String::new()
-        },
+        context = context_display,
         lines = lines_info_str,
     );
 
