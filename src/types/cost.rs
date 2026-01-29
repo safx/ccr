@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_cost_from_entries() {
-        let entries = vec![
+        let entries = [
             create_test_entry_with_cost(1.0),
             create_test_entry_with_cost(2.0),
             create_test_entry_with_cost(3.0),
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_cost_from_entries_mixed_formats() {
-        let entries = vec![
+        let entries = [
             create_test_entry_with_cost(1.0),
             create_test_entry_old_format(
                 Some(100),

@@ -13,7 +13,8 @@ pub use context_tokens::ContextTokens;
 pub use cost::Cost;
 pub use ids::{MessageId, RequestId, SessionId, UniqueHash};
 pub use input::{
-    Model, StatuslineHookJson, TranscriptMessage, TranscriptMessageContent, TranscriptUsage,
+    ContextWindow, CurrentUsage, Model, StatuslineHookJson, TranscriptMessage,
+    TranscriptMessageContent, TranscriptUsage,
 };
 pub use pricing::ModelPricing;
 pub use remaining_time::RemainingTime;

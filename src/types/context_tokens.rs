@@ -1,4 +1,4 @@
-use crate::types::TranscriptUsage;
+use crate::types::{ContextWindow, TranscriptUsage};
 use colored::Colorize;
 use std::env;
 use std::fmt;
@@ -21,6 +21,11 @@ impl ContextTokens {
             + usage.cache_read_input_tokens.unwrap_or(0);
 
         ContextTokens(total_input)
+    }
+
+    /// Create from API-provided context_window data
+    pub fn from_context_window(ctx: &ContextWindow) -> Self {
+        ContextTokens(ctx.total_input_tokens)
     }
 
     /// Calculate usage percentage and actual max tokens
@@ -62,6 +67,30 @@ impl ContextTokens {
 
         let formatted_total = Self::format_number(self.0 as usize);
         let formatted_max = Self::format_number(actual_max_tokens);
+
+        format!(
+            "{} ({} / {})",
+            percentage_str, formatted_total, formatted_max
+        )
+    }
+
+    /// Get formatted string using API-provided percentage and context window size
+    pub fn to_formatted_string_with_api(
+        &self,
+        used_percentage: u8,
+        context_window_size: u64,
+    ) -> String {
+        let percentage_str = format!("{}%", used_percentage);
+        let percentage_str = if used_percentage < 70 {
+            percentage_str.green()
+        } else if used_percentage < 90 {
+            percentage_str.yellow()
+        } else {
+            percentage_str.red()
+        };
+
+        let formatted_total = Self::format_number(self.0 as usize);
+        let formatted_max = Self::format_number(context_window_size as usize);
 
         format!(
             "{} ({} / {})",
@@ -121,5 +150,47 @@ mod tests {
         assert!(formatted.contains("50,000"));
         assert!(formatted.contains("%"));
         assert!(formatted.contains("/"));
+    }
+
+    #[test]
+    fn test_from_context_window() {
+        let ctx = ContextWindow {
+            total_input_tokens: 110530,
+            total_output_tokens: 136335,
+            context_window_size: 200000,
+            current_usage: None,
+            used_percentage: Some(55),
+            remaining_percentage: Some(45),
+        };
+        let tokens = ContextTokens::from_context_window(&ctx);
+        assert_eq!(format!("{}", tokens), "110530 tokens");
+    }
+
+    #[test]
+    fn test_formatted_string_with_api_green() {
+        let tokens = ContextTokens::new(100000);
+        let formatted = tokens.to_formatted_string_with_api(50, 200000);
+        // Should contain the API percentage (50%)
+        assert!(formatted.contains("50%"));
+        assert!(formatted.contains("100,000"));
+        assert!(formatted.contains("200,000"));
+    }
+
+    #[test]
+    fn test_formatted_string_with_api_yellow() {
+        let tokens = ContextTokens::new(150000);
+        let formatted = tokens.to_formatted_string_with_api(75, 200000);
+        // Should contain the API percentage (75%)
+        assert!(formatted.contains("75%"));
+        assert!(formatted.contains("150,000"));
+    }
+
+    #[test]
+    fn test_formatted_string_with_api_red() {
+        let tokens = ContextTokens::new(180000);
+        let formatted = tokens.to_formatted_string_with_api(95, 200000);
+        // Should contain the API percentage (95%)
+        assert!(formatted.contains("95%"));
+        assert!(formatted.contains("180,000"));
     }
 }
